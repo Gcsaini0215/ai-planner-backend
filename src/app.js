@@ -12,12 +12,16 @@ const mongoSanitize = require('express-mongo-sanitize');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { apiLimiter }             = require('./middleware/rateLimiter');
 const { initFirebase }           = require('./config/firebase');
+const connectDB                  = require('./config/database');
 const logger                     = require('./utils/logger');
 
 // ── Initialise Firebase Admin SDK ─────────────────────────────────────────────
 initFirebase();
 
 const app = express();
+
+// Required behind Vercel/Nginx so express-rate-limit can read X-Forwarded-For.
+app.set('trust proxy', 1);
 
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet());
@@ -60,6 +64,21 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // ── Global rate limiter ───────────────────────────────────────────────────────
+// Ensure MongoDB is connected before any API handler touches Mongoose models.
+// This matters on serverless hosts where src/server.js may not run first.
+app.use('/api', async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    logger.error(`MongoDB unavailable: ${error.message}`);
+    res.status(503).json({
+      success: false,
+      message: 'Database connection unavailable',
+    });
+  }
+});
+
 app.use('/api', apiLimiter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
