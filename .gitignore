@@ -1,0 +1,8 @@
+node_modules/
+.env
+*.log
+dist/
+coverage/
+.DS_Store
+firebase-service-account.json
+ai-planner-baeec-firebase-adminsdk-fbsvc-502a854e43.json
