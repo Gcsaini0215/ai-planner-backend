@@ -1,8 +1,11 @@
 'use strict';
 
+const path = require('path');
 const winston = require('winston');
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
+const enableFileLogs = process.env.ENABLE_FILE_LOGS === 'true' && !process.env.VERCEL;
+const logDir = process.env.LOG_DIR || 'logs';
 
 const devFormat = combine(
   colorize(),
@@ -21,18 +24,24 @@ const prodFormat = combine(
   winston.format.json()
 );
 
+const transports = [new winston.transports.Console()];
+
+if (enableFileLogs) {
+  transports.push(
+    new winston.transports.File({
+      filename: path.join(logDir, 'error.log'),
+      level: 'error',
+    }),
+    new winston.transports.File({
+      filename: path.join(logDir, 'combined.log'),
+    })
+  );
+}
+
 const logger = winston.createLogger({
   level:  process.env.NODE_ENV === 'production' ? 'info' : 'debug',
   format: process.env.NODE_ENV === 'production' ? prodFormat : devFormat,
-  transports: [
-    new winston.transports.Console(),
-    ...(process.env.NODE_ENV === 'production'
-      ? [
-          new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-          new winston.transports.File({ filename: 'logs/combined.log' }),
-        ]
-      : []),
-  ],
+  transports,
   exitOnError: false,
 });
 

@@ -63,6 +63,17 @@ if (process.env.NODE_ENV !== 'test') {
 app.use('/api', apiLimiter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
+app.get('/', (req, res) =>
+  res.json({
+    success: true,
+    message: 'AI Planner Backend API',
+    health:  '/health',
+    api:     '/api',
+  })
+);
+
+app.get(['/favicon.ico', '/favicon.png'], (req, res) => res.status(204).end());
+
 app.get('/health', (req, res) =>
   res.json({
     success: true,
@@ -74,6 +85,24 @@ app.get('/health', (req, res) =>
 );
 
 // ── API Routes ────────────────────────────────────────────────────────────────
+app.get('/api', (req, res) =>
+  res.json({
+    success: true,
+    message: 'API is running',
+    endpoints: [
+      '/api/auth',
+      '/api/users',
+      '/api/meals',
+      '/api/diets',
+      '/api/foods',
+      '/api/water',
+      '/api/exercises',
+      '/api/workouts',
+      '/api/reminders',
+    ],
+  })
+);
+
 app.use('/api/auth',      require('./routes/auth'));
 app.use('/api/users',     require('./routes/users'));
 app.use('/api/meals',     require('./routes/meals'));
