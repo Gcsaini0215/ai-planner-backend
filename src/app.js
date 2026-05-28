@@ -122,16 +122,21 @@ app.get('/api', (req, res) =>
   })
 );
 
-app.use('/api/auth',      require('./routes/auth'));
-app.use('/api/users',     require('./routes/users'));
-app.use('/api/meals',     require('./routes/meals'));
-app.use('/api/diets',     require('./routes/diets'));
-app.use('/api/foods',     require('./routes/foods'));
-app.use('/api/water',     require('./routes/water'));
-app.use('/api/weight',    require('./routes/weight'));
-app.use('/api/exercises', require('./routes/exercises'));
-app.use('/api/workouts',  require('./routes/workouts'));
-app.use('/api/reminders', require('./routes/reminders'));
+app.use('/api/auth',        require('./routes/auth'));
+app.use('/api/users',       require('./routes/users'));
+app.use('/api/meals',       require('./routes/meals'));
+app.use('/api/diets',       require('./routes/diets'));
+app.use('/api/foods',       require('./routes/foods'));
+app.use('/api/water',       require('./routes/water'));
+app.use('/api/weight',      require('./routes/weight'));
+app.use('/api/exercises',   require('./routes/exercises'));
+app.use('/api/workouts',    require('./routes/workouts'));
+app.use('/api/reminders',   require('./routes/reminders'));
+// ── Marketplace routes ────────────────────────────────────────────────────────
+app.use('/api/coaches',     require('./routes/coaches'));
+app.use('/api/marketplace', require('./routes/marketplace'));
+app.use('/api/chats',       require('./routes/chats'));
+app.use('/api/bookings',    require('./routes/bookings'));
 
 // ── 404 + Global error handler ────────────────────────────────────────────────
 app.use(notFound);
