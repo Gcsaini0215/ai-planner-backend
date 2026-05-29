@@ -51,11 +51,11 @@ const COACHES = [
       plansSold:      215,
       goals:          ['weight_loss', 'maintenance', 'general'],
       pricing: {
-        consultationPerHour: 29,
+        consultationPerHour: 29,   // stored as USD, app displays ×83 = ₹2,407
         dietPlanMonthly:     49,
         workoutMonthly:      39,
         premiumMonthly:      79,
-        currency:            'USD',
+        currency:            'INR',
       },
       certifications: [
         { title: 'Registered Dietitian Nutritionist (RDN)', issuer: 'Academy of Nutrition and Dietetics', year: 2016 },
