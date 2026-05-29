@@ -12,52 +12,54 @@ const initFirebase = () => {
   try {
     let credential;
 
+    // ── Option 1: JSON file on disk (local dev) ───────────────────────────
     if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-      // Option 1 – service account JSON file (recommended for local dev)
-      const serviceAccountPath = path.resolve(
-        process.env.FIREBASE_SERVICE_ACCOUNT_PATH
-      );
-
-      // Check the file exists before requiring it
+      const serviceAccountPath = path.resolve(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
       const fs = require('fs');
-      if (!fs.existsSync(serviceAccountPath)) {
+      if (fs.existsSync(serviceAccountPath)) {
+        const serviceAccount = require(serviceAccountPath);
+        credential = admin.credential.cert(serviceAccount);
+        logger.info(`Firebase: using service account file at ${serviceAccountPath}`);
+      } else {
+        // File path is set but file doesn't exist (e.g. on Vercel) —
+        // fall through to try individual env vars below.
         logger.warn(
           `Firebase service account file not found at "${serviceAccountPath}". ` +
-          'Firebase Auth (phone OTP login) will be unavailable. ' +
-          'Dev-login still works without it. ' +
-          'See README for how to download the file from Firebase Console.'
+          'Falling back to FIREBASE_PROJECT_ID / FIREBASE_PRIVATE_KEY / FIREBASE_CLIENT_EMAIL env vars.'
         );
-        return null;
       }
+    }
 
-      const serviceAccount = require(serviceAccountPath);
-      credential = admin.credential.cert(serviceAccount);
-    } else if (
-      process.env.FIREBASE_PROJECT_ID &&
-      process.env.FIREBASE_PRIVATE_KEY &&
-      process.env.FIREBASE_CLIENT_EMAIL
-    ) {
-      // Option 2 – individual env vars (CI / cloud environments)
-      credential = admin.credential.cert({
-        projectId:   process.env.FIREBASE_PROJECT_ID,
-        privateKey:  process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      });
-    } else {
+    // ── Option 2: Individual env vars (Vercel / CI / production) ─────────
+    if (!credential) {
+      if (
+        process.env.FIREBASE_PROJECT_ID &&
+        process.env.FIREBASE_PRIVATE_KEY &&
+        process.env.FIREBASE_CLIENT_EMAIL
+      ) {
+        credential = admin.credential.cert({
+          projectId:   process.env.FIREBASE_PROJECT_ID,
+          privateKey:  process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        });
+        logger.info('Firebase: using individual env var credentials');
+      }
+    }
+
+    // ── No credentials at all ─────────────────────────────────────────────
+    if (!credential) {
       logger.warn(
-        'No Firebase credentials configured. ' +
-        'Firebase Auth (phone OTP login) will be unavailable. ' +
-        'Dev-login still works without it.'
+        'No Firebase credentials found. Phone OTP login will not work. ' +
+        'Set FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY and FIREBASE_CLIENT_EMAIL env vars.'
       );
       return null;
     }
 
     firebaseApp = admin.initializeApp({ credential });
-    logger.info('Firebase Admin SDK initialised');
+    logger.info('Firebase Admin SDK initialised successfully');
     return firebaseApp;
   } catch (error) {
     logger.error(`Firebase init error: ${error.message}`);
-    // Don't crash the server — Firebase is only needed for phone OTP login
     return null;
   }
 };
