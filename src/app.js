@@ -138,6 +138,9 @@ app.use('/api/marketplace', require('./routes/marketplace'));
 app.use('/api/chats',       require('./routes/chats'));
 app.use('/api/bookings',    require('./routes/bookings'));
 
+// ── Seed routes (dev only) ────────────────────────────────────────────────────
+app.use('/api/seed',        require('./routes/seed'));
+
 // ── 404 + Global error handler ────────────────────────────────────────────────
 app.use(notFound);
 app.use(errorHandler);
