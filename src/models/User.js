@@ -51,12 +51,16 @@ const userSchema = new mongoose.Schema(
 
     goal: {
       type: String,
-      enum: ['lose_weight', 'maintain', 'gain_muscle', 'improve_health', ''],
+      // Accept both Flutter short-form ('lose','gain','muscle') and full-form ('lose_weight', etc.)
+      enum: ['lose_weight', 'maintain', 'gain_muscle', 'improve_health',
+             'lose', 'gain', 'muscle', ''],
     },
 
     activityLevel: {
       type: String,
-      enum: ['sedentary', 'lightly_active', 'moderately_active', 'very_active', 'extra_active', ''],
+      // Accept both Flutter short-form ('light','moderate','active') and full-form
+      enum: ['sedentary', 'lightly_active', 'moderately_active', 'very_active', 'extra_active',
+             'light', 'moderate', 'active', ''],
     },
 
     // Auto-calculated or manually set daily goals

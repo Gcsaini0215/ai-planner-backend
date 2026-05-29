@@ -31,18 +31,32 @@ const firebaseLogin = async (req, res, next) => {
     }
 
     // ── Upsert user ───────────────────────────────────────────────────────
+    // Look up by Firebase UID first, then fall back to phone number.
+    // The phone fallback handles users created via devLogin (which used a
+    // fake UID like "dev_+91...") — we migrate them to real Firebase auth
+    // instead of creating a duplicate account.
     let user = await User.findOne({ firebaseUid: uid });
 
     if (!user) {
-      user = await User.create({
-        firebaseUid: uid,
-        phone,
-        lastLoginAt: new Date(),
-      });
-      logger.info(`New user registered: ${phone}`);
+      // Check if a user with this phone already exists (devLogin migration)
+      user = await User.findOne({ phone });
+      if (user) {
+        // Migrate: update firebaseUid to the real one from Firebase Auth
+        user.firebaseUid = uid;
+        user.lastLoginAt = new Date();
+        await user.save();
+        logger.info(`Migrated devLogin user to Firebase auth: ${phone}`);
+      } else {
+        // Truly new user
+        user = await User.create({
+          firebaseUid: uid,
+          phone,
+          lastLoginAt: new Date(),
+        });
+        logger.info(`New user registered via Firebase: ${phone}`);
+      }
     } else {
       user.lastLoginAt = new Date();
-      // Sync phone in case it changed
       if (user.phone !== phone) user.phone = phone;
       await user.save();
     }
@@ -60,10 +74,26 @@ const firebaseLogin = async (req, res, next) => {
 
 /**
  * GET /api/auth/me
- * Returns the authenticated user's profile.
+ * Returns the authenticated user with isProfileComplete.
+ * Self-heals the flag for existing users where it was never set properly
+ * (e.g. saved before the enum mapping fix).
  */
 const getMe = async (req, res) => {
-  return sendSuccess(res, 200, 'User fetched', req.user.toSafeJSON());
+  const user = req.user;
+  const data = user.toSafeJSON();
+
+  // Auto-heal: if all core fields are present but flag is false, fix it now.
+  if (!data.isProfileComplete) {
+    const core = ['name', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel'];
+    const allPresent = core.every((f) => data[f] !== undefined && data[f] !== null && data[f] !== '');
+    if (allPresent) {
+      data.isProfileComplete = true;
+      // Persist the fix in the background (non-blocking)
+      User.findByIdAndUpdate(user._id, { isProfileComplete: true }).exec().catch(() => {});
+    }
+  }
+
+  return sendSuccess(res, 200, 'User fetched', data);
 };
 
 /**

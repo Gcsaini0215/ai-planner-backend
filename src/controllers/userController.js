@@ -48,9 +48,11 @@ const updateProfile = async (req, res, next) => {
       });
     }
 
-    // Mark profile complete if core fields present
+    // Mark profile complete when all 7 core fields are present and non-empty
     const core = ['name', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel'];
-    updates.isProfileComplete = core.every((f) => merged[f]);
+    updates.isProfileComplete = core.every(
+      (f) => merged[f] !== undefined && merged[f] !== null && merged[f] !== ''
+    );
 
     const updated = await User.findByIdAndUpdate(user._id, updates, {
       new:       true,
