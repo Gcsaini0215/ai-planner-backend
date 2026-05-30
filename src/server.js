@@ -36,6 +36,21 @@ const startServer = async () => {
   try {
     await connectDB();
 
+    // Auto-seed food database after DB is connected
+    try {
+      const Food      = require('./models/Food');
+      const seedFoods = require('./seed/seedFoods');
+      const count     = await Food.countDocuments({ isVerified: true });
+      if (count < 60) {
+        await seedFoods(process.env.MONGO_URI);
+        logger.info('✅ Food database seeded');
+      } else {
+        logger.info(`ℹ️  Food DB has ${count} verified foods — seed skipped`);
+      }
+    } catch (e) {
+      logger.warn(`Food seed skipped: ${e.message}`);
+    }
+
     const server = http.createServer(app);
 
     // ── Socket.IO init ────────────────────────────────────────────────────────

@@ -141,21 +141,6 @@ app.use('/api/bookings',    require('./routes/bookings'));
 // ── Seed routes (dev only) ────────────────────────────────────────────────────
 app.use('/api/seed',        require('./routes/seed'));
 
-// ── Auto-seed food database on startup ───────────────────────────────────────
-(async () => {
-  try {
-    const Food = require('./models/Food');
-    const count = await Food.countDocuments({ isVerified: true });
-    if (count < 60) {
-      const seedFoods = require('./seed/seedFoods');
-      await seedFoods(process.env.MONGO_URI);
-      logger.info('Food database seeded successfully');
-    }
-  } catch (e) {
-    logger.warn('Food seed skipped:', e.message);
-  }
-})();
-
 // ── 404 + Global error handler ────────────────────────────────────────────────
 app.use(notFound);
 app.use(errorHandler);
