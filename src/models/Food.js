@@ -39,6 +39,9 @@ const foodSchema = new mongoose.Schema(
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
     isVerified: { type: Boolean, default: false },
+
+    // Goal tags: 'weight-gain' | 'weight-loss' | 'maintain' | 'high-protein' | 'low-carb'
+    goals: [{ type: String, enum: ['weight-gain', 'weight-loss', 'maintain', 'high-protein', 'low-carb'] }],
   },
   {
     timestamps: true,
@@ -47,6 +50,6 @@ const foodSchema = new mongoose.Schema(
 );
 
 // Full-text search index
-foodSchema.index({ name: 'text', category: 'text' });
+foodSchema.index({ name: 'text', category: 'text', goals: 'text' });
 
 module.exports = mongoose.model('Food', foodSchema);
