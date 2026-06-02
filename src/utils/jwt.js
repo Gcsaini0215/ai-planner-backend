@@ -32,9 +32,16 @@ const verifyRefreshToken = (token) =>
 
 /**
  * Build the full token response object returned to the client.
+ * Embeds role and isVerifiedCoach so Flutter can redirect to the correct
+ * dashboard without an extra /me round-trip.
  */
 const buildTokenResponse = (user) => {
-  const payload = { id: user._id, phone: user.phone };
+  const payload = {
+    id:             user.id,
+    phone:          user.phone,
+    role:           user.role           || 'user',
+    isVerifiedCoach:user.isVerifiedCoach || false,
+  };
 
   return {
     accessToken:  generateAccessToken(payload),

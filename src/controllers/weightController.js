@@ -1,82 +1,53 @@
 'use strict';
 
 const { sendSuccess, sendError } = require('../utils/response');
-const WeightLog = require('../models/WeightLog');
-const User      = require('../models/User');
+const prisma = require('../config/prisma');
 
-/**
- * POST /api/weight  — log a weight entry
- */
+/** POST /api/weight */
 const logWeight = async (req, res, next) => {
   try {
     const { weight, note } = req.body;
     const date = req.body.date || new Date().toISOString().split('T')[0];
 
-    const log = await WeightLog.create({
-      userId: req.user._id,
-      weight,
-      date,
-      note: note || '',
+    const log = await prisma.weightLog.create({
+      data: { userId: req.user.id, weight, date, note: note || '' },
     });
 
-    // Also keep the User.weight field up-to-date with the latest reading
-    await User.findByIdAndUpdate(req.user._id, { weight });
+    // Keep User.weight current
+    await prisma.user.update({ where: { id: req.user.id }, data: { weight } });
 
     return sendSuccess(res, 201, 'Weight logged', {
-      _id:    log._id,
-      weight: log.weight,
-      date:   log.date,
-      note:   log.note,
+      id: log.id, weight: log.weight, date: log.date, note: log.note,
     });
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };
 
-/**
- * GET /api/weight/history?days=30
- */
+/** GET /api/weight/history */
 const getWeightHistory = async (req, res, next) => {
   try {
-    const days = Math.min(parseInt(req.query.days, 10) || 30, 365);
+    const days  = Math.min(parseInt(req.query.days, 10) || 30, 365);
     const since = new Date();
     since.setDate(since.getDate() - days);
     const sinceStr = since.toISOString().split('T')[0];
 
-    const logs = await WeightLog.find({
-      userId: req.user._id,
-      date:   { $gte: sinceStr },
-    })
-      .sort({ date: 1 })
-      .lean();
+    const logs = await prisma.weightLog.findMany({
+      where:   { userId: req.user.id, date: { gte: sinceStr } },
+      orderBy: { date: 'asc' },
+    });
 
-    const mapped = logs.map((l) => ({
-      id:     l._id,
-      weight: l.weight,
-      date:   l.date,
-      note:   l.note,
-    }));
-
-    return sendSuccess(res, 200, 'Weight history fetched', mapped);
-  } catch (error) {
-    next(error);
-  }
+    return sendSuccess(res, 200, 'Weight history fetched',
+      logs.map((l) => ({ id: l.id, weight: l.weight, date: l.date, note: l.note })));
+  } catch (error) { next(error); }
 };
 
-/**
- * DELETE /api/weight/:id
- */
+/** DELETE /api/weight/:id */
 const deleteWeightLog = async (req, res, next) => {
   try {
-    const log = await WeightLog.findOneAndDelete({
-      _id:    req.params.id,
-      userId: req.user._id,
-    });
+    const log = await prisma.weightLog.findFirst({ where: { id: req.params.id, userId: req.user.id } });
     if (!log) return sendError(res, 404, 'Weight log not found');
+    await prisma.weightLog.delete({ where: { id: req.params.id } });
     return sendSuccess(res, 200, 'Weight log deleted');
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };
 
 module.exports = { logWeight, getWeightHistory, deleteWeightLog };

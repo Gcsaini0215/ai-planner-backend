@@ -1,94 +1,68 @@
 'use strict';
 
 const { sendSuccess, sendError, paginationMeta } = require('../utils/response');
-const Food = require('../models/Food');
+const prisma = require('../config/prisma');
 
-/**
- * GET /api/foods?category=fruits&page=1&limit=30
- */
+/** GET /api/foods */
 const getFoods = async (req, res, next) => {
   try {
     const { category, page = 1, limit = 30 } = req.query;
-    const skip   = (Number(page) - 1) * Number(limit);
-    const filter = {};
-    if (category) filter.category = category;
+    const skip  = (Number(page) - 1) * Number(limit);
+    const where = {};
+    if (category) where.category = category;
 
     const [foods, total] = await Promise.all([
-      Food.find(filter).sort({ name: 1 }).skip(skip).limit(Number(limit)),
-      Food.countDocuments(filter),
+      prisma.food.findMany({ where, orderBy: { name: 'asc' }, skip, take: Number(limit) }),
+      prisma.food.count({ where }),
     ]);
 
-    return sendSuccess(
-      res, 200, 'Foods fetched', foods,
-      paginationMeta({ total, page: Number(page), limit: Number(limit) })
-    );
-  } catch (error) {
-    next(error);
-  }
+    return sendSuccess(res, 200, 'Foods fetched', foods,
+      paginationMeta({ total, page: Number(page), limit: Number(limit) }));
+  } catch (error) { next(error); }
 };
 
-/**
- * GET /api/foods/search?q=chicken&category=protein
- */
+/** GET /api/foods/search */
 const searchFoods = async (req, res, next) => {
   try {
     const { q, category, page = 1, limit = 20 } = req.query;
+    if (!q || q.trim().length < 2) return sendError(res, 400, 'Search query must be at least 2 characters');
 
-    if (!q || q.trim().length < 2) {
-      return sendError(res, 400, 'Search query must be at least 2 characters');
-    }
-
-    const skip   = (Number(page) - 1) * Number(limit);
-    const filter = {
-      $or: [
-        { $text: { $search: q } },
-        { name: { $regex: q, $options: 'i' } },
+    const skip  = (Number(page) - 1) * Number(limit);
+    const where = {
+      OR: [
+        { name:     { contains: q, mode: 'insensitive' } },
+        { category: { contains: q, mode: 'insensitive' } },
       ],
     };
-    if (category) filter.category = category;
+    if (category) where.category = category;
 
     const [foods, total] = await Promise.all([
-      Food.find(filter).sort({ score: { $meta: 'textScore' }, name: 1 })
-        .skip(skip).limit(Number(limit)),
-      Food.countDocuments(filter),
+      prisma.food.findMany({ where, orderBy: { name: 'asc' }, skip, take: Number(limit) }),
+      prisma.food.count({ where }),
     ]);
 
-    return sendSuccess(
-      res, 200, 'Search results', foods,
-      paginationMeta({ total, page: Number(page), limit: Number(limit) })
-    );
-  } catch (error) {
-    next(error);
-  }
+    return sendSuccess(res, 200, 'Search results', foods,
+      paginationMeta({ total, page: Number(page), limit: Number(limit) }));
+  } catch (error) { next(error); }
 };
 
-/**
- * GET /api/foods/:id
- */
+/** GET /api/foods/:id */
 const getFood = async (req, res, next) => {
   try {
-    const food = await Food.findById(req.params.id);
+    const food = await prisma.food.findUnique({ where: { id: req.params.id } });
     if (!food) return sendError(res, 404, 'Food not found');
     return sendSuccess(res, 200, 'Food fetched', food);
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };
 
-/**
- * POST /api/foods  (creates a custom user food)
- */
+/** POST /api/foods */
 const createFood = async (req, res, next) => {
   try {
-    const food = await Food.create({
-      ...req.body,
-      isCustom:  true,
-      createdBy: req.user?._id,
+    const food = await prisma.food.create({
+      data: { ...req.body, isCustom: true, createdById: req.user?.id || null },
     });
     return sendSuccess(res, 201, 'Custom food created', food);
-  } catch (error) {
-    next(error);
-  }
+  } catch (error) { next(error); }
 };
 
 module.exports = { getFoods, searchFoods, getFood, createFood };

@@ -1,71 +1,76 @@
 'use strict';
 
 const { sendSuccess, sendError } = require('../utils/response');
-const Booking     = require('../models/Booking');
-const CoachProfile = require('../models/CoachProfile');
+const prisma = require('../config/prisma');
 
 // ── POST /api/bookings ────────────────────────────────────────────────────────
 const createBooking = async (req, res, next) => {
   try {
     const { coachId, scheduledAt, type, durationMins, notes } = req.body;
 
-    const coach = await CoachProfile.findById(coachId);
+    const coach = await prisma.coachProfile.findUnique({ where: { id: coachId } });
     if (!coach) return sendError(res, 404, 'Coach not found');
 
-    // Check slot conflict
-    const conflict = await Booking.findOne({
-      coachId,
-      scheduledAt: new Date(scheduledAt),
-      status: { $in: ['pending', 'confirmed'] },
+    const scheduledDate = new Date(scheduledAt);
+
+    const conflict = await prisma.booking.findFirst({
+      where: {
+        coachId,
+        scheduledAt: scheduledDate,
+        status: { in: ['pending', 'confirmed'] },
+      },
     });
     if (conflict) return sendError(res, 409, 'Slot already booked');
 
-    const amount = coach.pricing?.consultationPerHour || 0;
+    const pricing = coach.pricing || {};
+    const amount  = pricing.consultationPerHour || 0;
 
-    const booking = await Booking.create({
-      userId:      req.user._id,
-      coachId,
-      scheduledAt: new Date(scheduledAt),
-      type:        type || 'video',
-      durationMins: durationMins || 60,
-      amount,
-      currency:    coach.pricing?.currency || 'USD',
-      notes:       notes || '',
+    const booking = await prisma.booking.create({
+      data: {
+        userId:      req.user.id,
+        coachId,
+        scheduledAt: scheduledDate,
+        type:        type        || 'video',
+        durationMins: durationMins || 60,
+        amount,
+        currency:    pricing.currency || 'USD',
+        notes:       notes || '',
+      },
     });
 
     return sendSuccess(res, 201, 'Booking created', booking);
   } catch (e) { next(e); }
 };
 
-// ── GET /api/bookings — user's bookings ───────────────────────────────────────
+// ── GET /api/bookings ─────────────────────────────────────────────────────────
 const getMyBookings = async (req, res, next) => {
   try {
-    const { status } = req.query;
-    const query = { userId: req.user._id };
-    if (status) query.status = status;
+    const where = { userId: req.user.id };
+    if (req.query.status) where.status = req.query.status;
 
-    const bookings = await Booking.find(query)
-      .populate('coachId', 'displayName profilePhoto')
-      .sort({ scheduledAt: -1 })
-      .lean();
+    const bookings = await prisma.booking.findMany({
+      where,
+      include: { coach: { select: { displayName: true, profilePhoto: true } } },
+      orderBy: { scheduledAt: 'desc' },
+    });
     return sendSuccess(res, 200, 'Bookings fetched', bookings);
   } catch (e) { next(e); }
 };
 
-// ── GET /api/bookings/coach — coach's bookings ───────────────────────────────
+// ── GET /api/bookings/coach ───────────────────────────────────────────────────
 const getCoachBookings = async (req, res, next) => {
   try {
-    const coachProfile = await CoachProfile.findOne({ userId: req.user._id });
+    const coachProfile = await prisma.coachProfile.findUnique({ where: { userId: req.user.id } });
     if (!coachProfile) return sendError(res, 403, 'Not a coach');
 
-    const { status } = req.query;
-    const query = { coachId: coachProfile._id };
-    if (status) query.status = status;
+    const where = { coachId: coachProfile.id };
+    if (req.query.status) where.status = req.query.status;
 
-    const bookings = await Booking.find(query)
-      .populate('userId', 'name phone')
-      .sort({ scheduledAt: 1 })
-      .lean();
+    const bookings = await prisma.booking.findMany({
+      where,
+      include: { user: { select: { name: true, phone: true } } },
+      orderBy: { scheduledAt: 'asc' },
+    });
     return sendSuccess(res, 200, 'Bookings fetched', bookings);
   } catch (e) { next(e); }
 };
@@ -75,20 +80,22 @@ const updateBooking = async (req, res, next) => {
   try {
     const { status, cancelReason, meetingLink, scheduledAt } = req.body;
 
-    const coachProfile = await CoachProfile.findOne({ userId: req.user._id });
+    const coachProfile = await prisma.coachProfile.findUnique({ where: { userId: req.user.id } });
 
-    const filter = coachProfile
-      ? { _id: req.params.id, coachId: coachProfile._id }
-      : { _id: req.params.id, userId: req.user._id };
+    const where = coachProfile
+      ? { id: req.params.id, coachId: coachProfile.id }
+      : { id: req.params.id, userId: req.user.id };
+
+    const existing = await prisma.booking.findFirst({ where });
+    if (!existing) return sendError(res, 404, 'Booking not found');
 
     const update = {};
-    if (status)      update.status      = status;
+    if (status)       update.status       = status;
     if (cancelReason) update.cancelReason = cancelReason;
     if (meetingLink)  update.meetingLink  = meetingLink;
     if (scheduledAt)  update.scheduledAt  = new Date(scheduledAt);
 
-    const booking = await Booking.findOneAndUpdate(filter, { $set: update }, { new: true });
-    if (!booking) return sendError(res, 404, 'Booking not found');
+    const booking = await prisma.booking.update({ where: { id: req.params.id }, data: update });
     return sendSuccess(res, 200, 'Booking updated', booking);
   } catch (e) { next(e); }
 };
@@ -96,35 +103,32 @@ const updateBooking = async (req, res, next) => {
 // ── GET /api/coaches/:id/slots ────────────────────────────────────────────────
 const getAvailableSlots = async (req, res, next) => {
   try {
-    const { date } = req.query; // YYYY-MM-DD
+    const { date } = req.query;
     if (!date) return sendError(res, 400, 'date required');
 
-    const coach = await CoachProfile.findById(req.params.id).lean();
+    const coach = await prisma.coachProfile.findUnique({ where: { id: req.params.id } });
     if (!coach) return sendError(res, 404, 'Coach not found');
 
     const dayOfWeek = new Date(date).getDay();
-    const slots = (coach.availability || []).filter(s => s.dayOfWeek === dayOfWeek);
+    const availability = Array.isArray(coach.availability) ? coach.availability : [];
+    const slots = availability.filter((s) => s.dayOfWeek === dayOfWeek);
 
-    // Remove already booked
-    const booked = await Booking.find({
-      coachId: coach._id,
-      scheduledAt: {
-        $gte: new Date(date),
-        $lt:  new Date(new Date(date).getTime() + 86400000),
+    const dayStart = new Date(date);
+    const dayEnd   = new Date(dayStart.getTime() + 86400000);
+
+    const booked = await prisma.booking.findMany({
+      where: {
+        coachId: coach.id,
+        scheduledAt: { gte: dayStart, lt: dayEnd },
+        status: { in: ['pending', 'confirmed'] },
       },
-      status: { $in: ['pending', 'confirmed'] },
-    }).lean();
+    });
 
-    const bookedTimes = booked.map(b =>
-      b.scheduledAt.toTimeString().slice(0, 5)
-    );
+    const bookedTimes = booked.map((b) => b.scheduledAt.toTimeString().slice(0, 5));
+    const available   = slots.filter((s) => !bookedTimes.includes(s.startTime));
 
-    const available = slots.filter(s => !bookedTimes.includes(s.startTime));
     return sendSuccess(res, 200, 'Slots fetched', available);
   } catch (e) { next(e); }
 };
 
-module.exports = {
-  createBooking, getMyBookings, getCoachBookings,
-  updateBooking, getAvailableSlots,
-};
+module.exports = { createBooking, getMyBookings, getCoachBookings, updateBooking, getAvailableSlots };

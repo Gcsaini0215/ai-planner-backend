@@ -1,17 +1,15 @@
 'use strict';
 
-const { sendSuccess, sendError } = require('../utils/response');
-const User        = require('../models/User');
-const Meal        = require('../models/Meal');
-const WaterLog    = require('../models/WaterLog');
-const WorkoutLog  = require('../models/WorkoutLog');
+const { sendSuccess } = require('../utils/response');
+const { toSafeUser, calcCalorieGoal } = require('../utils/userHelpers');
+const prisma = require('../config/prisma');
 
 /**
  * GET /api/users/profile
  */
 const getProfile = async (req, res, next) => {
   try {
-    return sendSuccess(res, 200, 'Profile fetched', req.user.toSafeJSON());
+    return sendSuccess(res, 200, 'Profile fetched', toSafeUser(req.user));
   } catch (error) {
     next(error);
   }
@@ -33,12 +31,10 @@ const updateProfile = async (req, res, next) => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     }
 
-    // Auto-calculate calorie goal when biometrics change
-    const user = req.user;
-    const merged = { ...user.toObject(), ...updates };
+    const merged = { ...req.user, ...updates };
 
     if (!updates.caloriesGoal) {
-      updates.caloriesGoal = User.calcCalorieGoal({
+      updates.caloriesGoal = calcCalorieGoal({
         weight:        merged.weight,
         height:        merged.height,
         age:           merged.age,
@@ -48,18 +44,17 @@ const updateProfile = async (req, res, next) => {
       });
     }
 
-    // Mark profile complete when all 7 core fields are present and non-empty
     const core = ['name', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel'];
     updates.isProfileComplete = core.every(
       (f) => merged[f] !== undefined && merged[f] !== null && merged[f] !== ''
     );
 
-    const updated = await User.findByIdAndUpdate(user._id, updates, {
-      new:       true,
-      runValidators: true,
-    }).select('-firebaseUid');
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data:  updates,
+    });
 
-    return sendSuccess(res, 200, 'Profile updated', updated);
+    return sendSuccess(res, 200, 'Profile updated', toSafeUser(updated));
   } catch (error) {
     next(error);
   }
@@ -67,24 +62,18 @@ const updateProfile = async (req, res, next) => {
 
 /**
  * GET /api/users/dashboard
- * Aggregated daily stats for the authenticated user.
  */
 const getDashboard = async (req, res, next) => {
   try {
-    const user = req.user;
+    const user  = req.user;
     const today = new Date().toISOString().split('T')[0];
 
-    // Run all aggregations in parallel
-    const [mealsToday, waterToday, workoutsToday] = await Promise.all([
-      Meal.find({ userId: user._id, date: today }),
-      WaterLog.aggregate([
-        { $match: { userId: user._id, date: today } },
-        { $group: { _id: null, total: { $sum: '$amount' } } },
-      ]),
-      WorkoutLog.find({ userId: user._id, date: today }),
+    const [mealsToday, waterLogs, workoutsToday] = await Promise.all([
+      prisma.meal.findMany({ where: { userId: user.id, date: today } }),
+      prisma.waterLog.findMany({ where: { userId: user.id, date: today } }),
+      prisma.workoutLog.findMany({ where: { userId: user.id, date: today } }),
     ]);
 
-    // Calorie totals
     const caloriesConsumed = mealsToday.reduce((s, m) => s + m.totalCalories, 0);
     const macros = mealsToday.reduce(
       (acc, m) => ({
@@ -95,11 +84,17 @@ const getDashboard = async (req, res, next) => {
       { protein: 0, carbs: 0, fat: 0 }
     );
 
-    const waterConsumed    = waterToday[0]?.total ?? 0;
-    const caloriesBurned   = workoutsToday.reduce((s, w) => s + w.caloriesBurned, 0);
-    const netCalories      = Math.round(caloriesConsumed - caloriesBurned);
+    const waterConsumed  = waterLogs.reduce((s, l) => s + l.amount, 0);
+    const caloriesBurned = workoutsToday.reduce((s, w) => s + w.caloriesBurned, 0);
+    const netCalories    = Math.round(caloriesConsumed - caloriesBurned);
 
-    const dashboard = {
+    const bmiHeight = user.height;
+    const bmiWeight = user.weight;
+    const bmi = (bmiHeight && bmiWeight)
+      ? parseFloat((bmiWeight / Math.pow(bmiHeight / 100, 2)).toFixed(1))
+      : null;
+
+    return sendSuccess(res, 200, 'Dashboard data fetched', {
       date: today,
       calories: {
         goal:      user.caloriesGoal,
@@ -122,15 +117,8 @@ const getDashboard = async (req, res, next) => {
       },
       meals:    mealsToday.length,
       workouts: workoutsToday.length,
-      profile:  {
-        name:   user.name,
-        weight: user.weight,
-        goal:   user.goal,
-        bmi:    user.bmi,
-      },
-    };
-
-    return sendSuccess(res, 200, 'Dashboard data fetched', dashboard);
+      profile:  { name: user.name, weight: user.weight, goal: user.goal, bmi },
+    });
   } catch (error) {
     next(error);
   }

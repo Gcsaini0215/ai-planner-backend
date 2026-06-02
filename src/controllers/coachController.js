@@ -1,45 +1,48 @@
 'use strict';
 
 const { sendSuccess, sendError } = require('../utils/response');
-const CoachProfile        = require('../models/CoachProfile');
-const CoachFollower       = require('../models/CoachFollower');
-const CoachReview         = require('../models/CoachReview');
-const MarketplacePlan     = require('../models/MarketplacePlan');
-const TransformationStory = require('../models/TransformationStory');
-const User                = require('../models/User');
+const prisma = require('../config/prisma');
 
 // ── GET /api/coaches ──────────────────────────────────────────────────────────
 const listCoaches = async (req, res, next) => {
   try {
     const {
       page = 1, limit = 20,
-      search, goal, role, minRating, maxPrice, sort = 'rating',
+      search, goal, role, minRating, sort = 'rating',
       featured,
     } = req.query;
 
-    const query = { status: 'approved', isActive: true };
+    const where = { status: 'approved', isActive: true };
+    if (role)      where.role       = role;
+    if (featured)  where.isVerified = true;
+    if (minRating) where.avgRating  = { gte: parseFloat(minRating) };
+    if (goal)      where.goals      = { has: goal };
+    if (search) {
+      where.OR = [
+        { displayName: { contains: search, mode: 'insensitive' } },
+        { bio:         { contains: search, mode: 'insensitive' } },
+        { tagline:     { contains: search, mode: 'insensitive' } },
+      ];
+    }
 
-    if (search) query.$text = { $search: search };
-    if (goal)   query.goals = goal;
-    if (role)   query.role  = role;
-    if (minRating) query.avgRating = { $gte: parseFloat(minRating) };
-    if (featured)  query.isVerified = true;
-
-    const sortMap = {
-      rating:    { avgRating: -1 },
-      followers: { followerCount: -1 },
-      newest:    { createdAt: -1 },
-      price:     { 'pricing.consultationPerHour': 1 },
+    const orderByMap = {
+      rating:    { avgRating:    'desc' },
+      followers: { followerCount: 'desc' },
+      newest:    { createdAt:    'desc' },
+      price:     { createdAt:    'asc'  }, // pricing is JSON; fallback sort
     };
 
     const skip  = (parseInt(page) - 1) * parseInt(limit);
-    const total = await CoachProfile.countDocuments(query);
-    const coaches = await CoachProfile.find(query)
-      .sort(sortMap[sort] || sortMap.rating)
-      .skip(skip)
-      .limit(parseInt(limit))
-      .populate('userId', 'name phone')
-      .lean();
+    const [coaches, total] = await Promise.all([
+      prisma.coachProfile.findMany({
+        where,
+        include: { user: { select: { name: true, phone: true } } },
+        orderBy: orderByMap[sort] || orderByMap.rating,
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.coachProfile.count({ where }),
+    ]);
 
     return sendSuccess(res, 200, 'Coaches fetched', {
       coaches, total,
@@ -52,17 +55,16 @@ const listCoaches = async (req, res, next) => {
 // ── GET /api/coaches/:id ──────────────────────────────────────────────────────
 const getCoach = async (req, res, next) => {
   try {
-    const coach = await CoachProfile.findById(req.params.id)
-      .populate('userId', 'name phone')
-      .lean();
+    const coach = await prisma.coachProfile.findUnique({
+      where:   { id: req.params.id },
+      include: { user: { select: { name: true, phone: true } } },
+    });
     if (!coach) return sendError(res, 404, 'Coach not found');
 
-    // Attach isFollowing flag if user is authenticated
     let isFollowing = false;
     if (req.user) {
-      isFollowing = !!(await CoachFollower.findOne({
-        coachId: coach._id,
-        userId:  req.user._id,
+      isFollowing = !!(await prisma.coachFollower.findUnique({
+        where: { coachId_userId: { coachId: coach.id, userId: req.user.id } },
       }));
     }
 
@@ -71,9 +73,12 @@ const getCoach = async (req, res, next) => {
 };
 
 // ── POST /api/coaches/apply ───────────────────────────────────────────────────
+// Accepted roles: coach | trainer | dietitian
+const ALLOWED_COACH_ROLES = ['coach', 'trainer', 'dietitian'];
+
 const applyAsCoach = async (req, res, next) => {
   try {
-    const existing = await CoachProfile.findOne({ userId: req.user._id });
+    const existing = await prisma.coachProfile.findUnique({ where: { userId: req.user.id } });
     if (existing) return sendError(res, 400, 'Application already exists');
 
     const {
@@ -81,19 +86,30 @@ const applyAsCoach = async (req, res, next) => {
       experience, languages, certifications, goals, pricing,
     } = req.body;
 
-    const profile = await CoachProfile.create({
-      userId: req.user._id,
-      displayName, bio, tagline,
-      role:            role || 'coach',
-      specializations: specializations || [],
-      experience:      experience || 0,
-      languages:       languages  || ['English'],
-      certifications:  certifications || [],
-      goals:           goals || [],
-      pricing:         pricing || {},
-    });
+    const coachRole = ALLOWED_COACH_ROLES.includes(role) ? role : 'coach';
 
-    return sendSuccess(res, 201, 'Application submitted', profile);
+    // Run both writes atomically so user.role and CoachProfile stay in sync
+    const [, profile] = await prisma.$transaction([
+      prisma.user.update({
+        where: { id: req.user.id },
+        data:  { role: coachRole },
+      }),
+      prisma.coachProfile.create({
+        data: {
+          userId: req.user.id,
+          displayName, bio: bio || '', tagline: tagline || '',
+          role:            coachRole,
+          specializations: specializations || [],
+          experience:      experience      || 0,
+          languages:       languages       || ['English'],
+          certifications:  certifications  || [],
+          goals:           goals           || [],
+          pricing:         pricing         || {},
+        },
+      }),
+    ]);
+
+    return sendSuccess(res, 201, 'Application submitted. Pending admin approval.', profile);
   } catch (e) { next(e); }
 };
 
@@ -106,34 +122,42 @@ const updateProfile = async (req, res, next) => {
       'profilePhoto','coverBanner','availability',
     ];
     const update = {};
-    allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+    allowed.forEach((k) => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
 
-    const profile = await CoachProfile.findOneAndUpdate(
-      { userId: req.user._id },
-      { $set: update },
-      { new: true },
-    );
-    if (!profile) return sendError(res, 404, 'Coach profile not found');
+    const profile = await prisma.coachProfile.update({
+      where: { userId: req.user.id },
+      data:  update,
+    });
     return sendSuccess(res, 200, 'Profile updated', profile);
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (e.code === 'P2025') return sendError(res, 404, 'Coach profile not found');
+    next(e);
+  }
 };
 
 // ── POST /api/coaches/:id/follow ──────────────────────────────────────────────
 const toggleFollow = async (req, res, next) => {
   try {
-    const existing = await CoachFollower.findOne({
-      coachId: req.params.id,
-      userId:  req.user._id,
+    const existing = await prisma.coachFollower.findUnique({
+      where: { coachId_userId: { coachId: req.params.id, userId: req.user.id } },
     });
 
     if (existing) {
-      await existing.deleteOne();
-      await CoachProfile.findByIdAndUpdate(req.params.id, { $inc: { followerCount: -1 } });
+      await prisma.coachFollower.delete({
+        where: { coachId_userId: { coachId: req.params.id, userId: req.user.id } },
+      });
+      await prisma.coachProfile.update({
+        where: { id: req.params.id },
+        data:  { followerCount: { decrement: 1 } },
+      });
       return sendSuccess(res, 200, 'Unfollowed', { following: false });
     }
 
-    await CoachFollower.create({ coachId: req.params.id, userId: req.user._id });
-    await CoachProfile.findByIdAndUpdate(req.params.id, { $inc: { followerCount: 1 } });
+    await prisma.coachFollower.create({ data: { coachId: req.params.id, userId: req.user.id } });
+    await prisma.coachProfile.update({
+      where: { id: req.params.id },
+      data:  { followerCount: { increment: 1 } },
+    });
     return sendSuccess(res, 200, 'Following', { following: true });
   } catch (e) { next(e); }
 };
@@ -141,10 +165,9 @@ const toggleFollow = async (req, res, next) => {
 // ── GET /api/coaches/:id/plans ────────────────────────────────────────────────
 const getCoachPlans = async (req, res, next) => {
   try {
-    const { type } = req.query;
-    const query = { coachId: req.params.id, isPublished: true };
-    if (type) query.type = type;
-    const plans = await MarketplacePlan.find(query).sort({ createdAt: -1 }).lean();
+    const where = { coachId: req.params.id, isPublished: true };
+    if (req.query.type) where.type = req.query.type;
+    const plans = await prisma.marketplacePlan.findMany({ where, orderBy: { createdAt: 'desc' } });
     return sendSuccess(res, 200, 'Plans fetched', plans);
   } catch (e) { next(e); }
 };
@@ -154,13 +177,19 @@ const getCoachReviews = async (req, res, next) => {
   try {
     const { page = 1, limit = 10 } = req.query;
     const skip  = (parseInt(page) - 1) * parseInt(limit);
-    const total = await CoachReview.countDocuments({ coachId: req.params.id, isModerated: true });
-    const reviews = await CoachReview.find({ coachId: req.params.id, isModerated: true })
-      .populate('userId', 'name')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .lean();
+    const where = { coachId: req.params.id, isModerated: true };
+
+    const [reviews, total] = await Promise.all([
+      prisma.coachReview.findMany({
+        where,
+        include: { user: { select: { name: true } } },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.coachReview.count({ where }),
+    ]);
+
     return sendSuccess(res, 200, 'Reviews fetched', { reviews, total });
   } catch (e) { next(e); }
 };
@@ -171,24 +200,29 @@ const addReview = async (req, res, next) => {
     const { rating, comment, transformationPhotoUrl } = req.body;
     const coachId = req.params.id;
 
-    const review = await CoachReview.create({
-      coachId,
-      userId:  req.user._id,
-      rating,
-      comment:                comment || '',
-      transformationPhotoUrl: transformationPhotoUrl || '',
-      isVerified:             false,
+    const review = await prisma.coachReview.create({
+      data: {
+        coachId, userId: req.user.id,
+        rating,
+        comment:                comment                || '',
+        transformationPhotoUrl: transformationPhotoUrl || '',
+      },
     });
 
     // Recalculate avg rating
-    const agg = await CoachReview.aggregate([
-      { $match: { coachId: review.coachId } },
-      { $group: { _id: null, avg: { $avg: '$rating' }, count: { $sum: 1 } } },
-    ]);
-    if (agg[0]) {
-      await CoachProfile.findByIdAndUpdate(coachId, {
-        avgRating:   Math.round(agg[0].avg * 10) / 10,
-        reviewCount: agg[0].count,
+    const agg = await prisma.coachReview.aggregate({
+      where: { coachId },
+      _avg:  { rating: true },
+      _count: { rating: true },
+    });
+
+    if (agg._avg.rating !== null) {
+      await prisma.coachProfile.update({
+        where: { id: coachId },
+        data:  {
+          avgRating:   Math.round(agg._avg.rating * 10) / 10,
+          reviewCount: agg._count.rating,
+        },
       });
     }
 
@@ -199,19 +233,21 @@ const addReview = async (req, res, next) => {
 // ── GET /api/coaches/:id/transformations ──────────────────────────────────────
 const getTransformations = async (req, res, next) => {
   try {
-    const stories = await TransformationStory.find({
-      coachId: req.params.id, isPublished: true,
-    }).sort({ createdAt: -1 }).lean();
+    const stories = await prisma.transformationStory.findMany({
+      where:   { coachId: req.params.id, isPublished: true },
+      orderBy: { createdAt: 'desc' },
+    });
     return sendSuccess(res, 200, 'Transformations fetched', stories);
   } catch (e) { next(e); }
 };
 
-// ── GET /api/coaches/my/profile (coach's own) ─────────────────────────────────
+// ── GET /api/coaches/my/profile ───────────────────────────────────────────────
 const getMyProfile = async (req, res, next) => {
   try {
-    const profile = await CoachProfile.findOne({ userId: req.user._id })
-      .populate('userId', 'name phone')
-      .lean();
+    const profile = await prisma.coachProfile.findUnique({
+      where:   { userId: req.user.id },
+      include: { user: { select: { name: true, phone: true } } },
+    });
     if (!profile) return sendError(res, 404, 'Profile not found');
     return sendSuccess(res, 200, 'My profile', profile);
   } catch (e) { next(e); }

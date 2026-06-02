@@ -2,21 +2,18 @@
 
 const { verifyFirebaseToken } = require('../config/firebase');
 const { buildTokenResponse, verifyRefreshToken, generateAccessToken } = require('../utils/jwt');
-const { sendSuccess, sendError }  = require('../utils/response');
-const User   = require('../models/User');
+const { sendSuccess, sendError } = require('../utils/response');
+const { toSafeUser } = require('../utils/userHelpers');
+const prisma = require('../config/prisma');
 const logger = require('../utils/logger');
 
 /**
  * POST /api/auth/firebase-login
- * 1. Verify Firebase ID token
- * 2. Upsert user in MongoDB
- * 3. Return JWT access + refresh tokens
  */
 const firebaseLogin = async (req, res, next) => {
   try {
     const { firebaseToken } = req.body;
 
-    // ── Verify with Firebase Admin SDK ────────────────────────────────────
     let decoded;
     try {
       decoded = await verifyFirebaseToken(firebaseToken);
@@ -25,48 +22,37 @@ const firebaseLogin = async (req, res, next) => {
     }
 
     const { uid, phone_number: phone } = decoded;
+    if (!phone) return sendError(res, 400, 'Phone number not present in Firebase token');
 
-    if (!phone) {
-      return sendError(res, 400, 'Phone number not present in Firebase token');
-    }
-
-    // ── Upsert user ───────────────────────────────────────────────────────
-    // Look up by Firebase UID first, then fall back to phone number.
-    // The phone fallback handles users created via devLogin (which used a
-    // fake UID like "dev_+91...") — we migrate them to real Firebase auth
-    // instead of creating a duplicate account.
-    let user = await User.findOne({ firebaseUid: uid });
+    let user = await prisma.user.findUnique({ where: { firebaseUid: uid } });
 
     if (!user) {
-      // Check if a user with this phone already exists (devLogin migration)
-      user = await User.findOne({ phone });
+      // Check phone fallback (devLogin migration)
+      user = await prisma.user.findUnique({ where: { phone } });
       if (user) {
-        // Migrate: update firebaseUid to the real one from Firebase Auth
-        user.firebaseUid = uid;
-        user.lastLoginAt = new Date();
-        await user.save();
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data:  { firebaseUid: uid, lastLoginAt: new Date() },
+        });
         logger.info(`Migrated devLogin user to Firebase auth: ${phone}`);
       } else {
-        // Truly new user
-        user = await User.create({
-          firebaseUid: uid,
-          phone,
-          lastLoginAt: new Date(),
+        user = await prisma.user.create({
+          data: { firebaseUid: uid, phone, lastLoginAt: new Date() },
         });
         logger.info(`New user registered via Firebase: ${phone}`);
       }
     } else {
-      user.lastLoginAt = new Date();
-      if (user.phone !== phone) user.phone = phone;
-      await user.save();
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data:  {
+          lastLoginAt: new Date(),
+          ...(user.phone !== phone ? { phone } : {}),
+        },
+      });
     }
 
     const tokens = buildTokenResponse(user);
-
-    return sendSuccess(res, 200, 'Login successful', {
-      user:   user.toSafeJSON(),
-      tokens,
-    });
+    return sendSuccess(res, 200, 'Login successful', { user: toSafeUser(user), tokens });
   } catch (error) {
     next(error);
   }
@@ -74,22 +60,18 @@ const firebaseLogin = async (req, res, next) => {
 
 /**
  * GET /api/auth/me
- * Returns the authenticated user with isProfileComplete.
- * Self-heals the flag for existing users where it was never set properly
- * (e.g. saved before the enum mapping fix).
  */
 const getMe = async (req, res) => {
   const user = req.user;
-  const data = user.toSafeJSON();
+  const data = toSafeUser(user);
 
-  // Auto-heal: if all core fields are present but flag is false, fix it now.
   if (!data.isProfileComplete) {
     const core = ['name', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel'];
     const allPresent = core.every((f) => data[f] !== undefined && data[f] !== null && data[f] !== '');
     if (allPresent) {
       data.isProfileComplete = true;
-      // Persist the fix in the background (non-blocking)
-      User.findByIdAndUpdate(user._id, { isProfileComplete: true }).exec().catch(() => {});
+      prisma.user.update({ where: { id: user.id }, data: { isProfileComplete: true } })
+        .catch(() => {});
     }
   }
 
@@ -98,7 +80,6 @@ const getMe = async (req, res) => {
 
 /**
  * POST /api/auth/refresh
- * Exchange a refresh token for a new access token.
  */
 const refreshToken = async (req, res, next) => {
   try {
@@ -112,26 +93,23 @@ const refreshToken = async (req, res, next) => {
       return sendError(res, 401, 'Invalid or expired refresh token');
     }
 
-    const user = await User.findById(decoded.id);
-    if (!user || !user.isActive) {
-      return sendError(res, 401, 'User not found');
-    }
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+    if (!user || !user.isActive) return sendError(res, 401, 'User not found');
 
-    const accessToken = generateAccessToken({ id: user._id, phone: user.phone });
-
-    return sendSuccess(res, 200, 'Token refreshed', {
-      accessToken,
-      tokenType: 'Bearer',
+    const accessToken = generateAccessToken({
+      id:              user.id,
+      phone:           user.phone,
+      role:            user.role            || 'user',
+      isVerifiedCoach: user.isVerifiedCoach || false,
     });
+    return sendSuccess(res, 200, 'Token refreshed', { accessToken, tokenType: 'Bearer' });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * POST /api/auth/dev-login   ← DEVELOPMENT ONLY
- * Accepts a phone number and returns a JWT without OTP verification.
- * Automatically blocked in production.
+ * POST /api/auth/dev-login  ← DEVELOPMENT ONLY
  */
 const devLogin = async (req, res, next) => {
   try {
@@ -142,25 +120,25 @@ const devLogin = async (req, res, next) => {
     const { phone } = req.body;
     if (!phone) return sendError(res, 400, 'phone is required');
 
-    let user = await User.findOne({ phone });
+    let user = await prisma.user.findUnique({ where: { phone } });
     if (!user) {
-      user = await User.create({
-        firebaseUid: `dev_${phone.replace(/\D/g, '')}`,
-        phone,
-        lastLoginAt: new Date(),
+      user = await prisma.user.create({
+        data: {
+          firebaseUid: `dev_${phone.replace(/\D/g, '')}`,
+          phone,
+          lastLoginAt: new Date(),
+        },
       });
       logger.info(`[DEV] New user created: ${phone}`);
     } else {
-      user.lastLoginAt = new Date();
-      await user.save();
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data:  { lastLoginAt: new Date() },
+      });
     }
 
     const tokens = buildTokenResponse(user);
-
-    return sendSuccess(res, 200, '[DEV] Login successful', {
-      user:   user.toSafeJSON(),
-      tokens,
-    });
+    return sendSuccess(res, 200, '[DEV] Login successful', { user: toSafeUser(user), tokens });
   } catch (error) {
     next(error);
   }

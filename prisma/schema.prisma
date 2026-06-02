@@ -1,0 +1,475 @@
+// This is your Prisma schema file.
+// Learn more: https://pris.ly/d/prisma-schema
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User
+// ─────────────────────────────────────────────────────────────────────────────
+enum UserRole {
+  user
+  coach
+  trainer
+  dietitian
+  admin
+}
+
+model User {
+  id                String    @id @default(uuid())
+  firebaseUid       String    @unique
+  phone             String    @unique
+  name              String    @default("")
+  email             String    @default("")
+  age               Int?
+  gender            String?
+  height            Float?
+  weight            Float?
+  targetWeight      Float?
+  goal              String?
+  activityLevel     String?
+  caloriesGoal      Int       @default(2000)
+  waterGoal         Int       @default(2500)
+  profileImage      String    @default("")
+  role              UserRole  @default(user)
+  isVerifiedCoach   Boolean   @default(false)
+  isProfileComplete Boolean   @default(false)
+  isActive          Boolean   @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  meals            Meal[]
+  waterLogs        WaterLog[]
+  weightLogs       WeightLog[]
+  workoutLogs      WorkoutLog[]
+  dietPlans        DietPlan[]
+  reminders        Reminder[]
+  customFoods      Food[]
+  coachProfile          CoachProfile?
+  coachFollowers        CoachFollower[]
+  coachReviews          CoachReview[]
+  purchases             Purchase[]
+  bookings              Booking[]
+  transformationStories TransformationStory[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Meal  (foods[] stored as JSON — denormalised snapshot)
+// ─────────────────────────────────────────────────────────────────────────────
+model Meal {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mealType        String   // breakfast | lunch | dinner | snack | night
+  name            String   @default("")
+  foods           Json     @default("[]")
+  totalCalories   Float    @default(0)
+  totalProtein    Float    @default(0)
+  totalCarbs      Float    @default(0)
+  totalFat        Float    @default(0)
+  totalFiber      Float    @default(0)
+  mealTime        String   @default("08:00")
+  date            String   // YYYY-MM-DD
+  notes           String   @default("")
+  reminderEnabled Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WaterLog
+// ─────────────────────────────────────────────────────────────────────────────
+model WaterLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int
+  date      String   // YYYY-MM-DD
+  timestamp DateTime @default(now())
+  note      String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WeightLog
+// ─────────────────────────────────────────────────────────────────────────────
+model WeightLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weight    Float
+  date      String   // YYYY-MM-DD
+  note      String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exercise
+// ─────────────────────────────────────────────────────────────────────────────
+model Exercise {
+  id                String   @id @default(uuid())
+  title             String
+  description       String   @default("")
+  videoUrl          String   @default("")
+  thumbnail         String   @default("")
+  duration          Int?
+  caloriesPerMinute Float    @default(5)
+  caloriesBurned    Float    @default(0)
+  difficulty        String   @default("beginner")
+  category          String   @default("other")
+  muscleGroups      String[] @default([])
+  equipment         String   @default("none")
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workoutLogs WorkoutLog[]
+
+  @@index([category, difficulty])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WorkoutLog
+// ─────────────────────────────────────────────────────────────────────────────
+model WorkoutLog {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exerciseId        String
+  exercise          Exercise @relation(fields: [exerciseId], references: [id])
+  exerciseTitle     String?
+  exerciseCategory  String?
+  duration          Int
+  caloriesBurned    Float    @default(0)
+  sets              Int?
+  reps              Int?
+  weight            Float?
+  notes             String   @default("")
+  date              String?  // YYYY-MM-DD
+  completedAt       DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId, date])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DietPlan  (meals[] stored as JSON)
+// ─────────────────────────────────────────────────────────────────────────────
+model DietPlan {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  description   String   @default("")
+  goal          String   @default("custom")
+  totalCalories Float    @default(0)
+  totalProtein  Float    @default(0)
+  totalCarbs    Float    @default(0)
+  totalFat      Float    @default(0)
+  meals         Json     @default("[]")
+  startDate     String?
+  endDate       String?
+  isActive      Boolean  @default(true)
+  color         String   @default("#6366F1")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, isActive])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Food
+// ─────────────────────────────────────────────────────────────────────────────
+model Food {
+  id           String   @id @default(uuid())
+  name         String
+  calories     Float
+  protein      Float    @default(0)
+  carbs        Float    @default(0)
+  fat          Float    @default(0)
+  fiber        Float    @default(0)
+  servingSize  String   @default("100g")
+  servingGrams Float    @default(100)
+  category     String   @default("other")
+  image        String   @default("")
+  barcode      String   @default("")
+  isCustom     Boolean  @default(false)
+  createdById  String?
+  createdBy    User?    @relation(fields: [createdById], references: [id])
+  isVerified   Boolean  @default(false)
+  goals        String[] @default([])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([name])
+  @@index([barcode])
+  @@index([category])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reminder
+// ─────────────────────────────────────────────────────────────────────────────
+model Reminder {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          String   // meal | water | workout | weigh_in | custom
+  title         String
+  emoji         String   @default("🔔")
+  time          String   @default("08:00")
+  beforeMinutes Int      @default(0)
+  repeat        String   @default("daily")
+  repeatDays    Int[]    @default([])
+  sound         String   @default("default")
+  isEnabled     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, type])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CoachProfile
+// certifications, availability, pricing, socialLinks stored as JSON
+// ─────────────────────────────────────────────────────────────────────────────
+model CoachProfile {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role            String   @default("coach")
+  displayName     String
+  bio             String   @default("")
+  tagline         String   @default("")
+  profilePhoto    String   @default("")
+  coverBanner     String   @default("")
+  specializations String[] @default([])
+  languages       String[] @default(["English"])
+  experience      Int      @default(0)
+  clientsServed   Int      @default(0)
+  certifications  Json     @default("[]")
+  isVerified      Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  status          String   @default("pending")
+  avgRating       Float    @default(0)
+  reviewCount     Int      @default(0)
+  followerCount   Int      @default(0)
+  plansSold       Int      @default(0)
+  pricing         Json     @default("{}")
+  availability    Json     @default("[]")
+  socialLinks     Json     @default("{}")
+  goals           String[] @default([])
+  totalEarnings   Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  followers       CoachFollower[]
+  reviews         CoachReview[]
+  bookings        Booking[]
+  plans           MarketplacePlan[]
+  purchases       Purchase[]
+  transformations TransformationStory[]
+
+  @@index([status, isActive])
+  @@index([avgRating])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CoachFollower
+// ─────────────────────────────────────────────────────────────────────────────
+model CoachFollower {
+  id        String       @id @default(uuid())
+  coachId   String
+  coach     CoachProfile @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([coachId, userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CoachReview
+// ─────────────────────────────────────────────────────────────────────────────
+model CoachReview {
+  id                     String       @id @default(uuid())
+  coachId                String
+  coach                  CoachProfile @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  userId                 String
+  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchaseId             String?
+  rating                 Int
+  comment                String       @default("")
+  isVerified             Boolean      @default(false)
+  transformationPhotoUrl String       @default("")
+  isModerated            Boolean      @default(true)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  @@unique([coachId, userId])
+  @@index([coachId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Booking
+// ─────────────────────────────────────────────────────────────────────────────
+model Booking {
+  id           String       @id @default(uuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coachId      String
+  coach        CoachProfile @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  type         String       @default("video")
+  status       String       @default("pending")
+  scheduledAt  DateTime
+  durationMins Int          @default(60)
+  amount       Float        @default(0)
+  currency     String       @default("USD")
+  isPaid       Boolean      @default(false)
+  notes        String       @default("")
+  meetingLink  String       @default("")
+  reminderSent Boolean      @default(false)
+  cancelReason String       @default("")
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([userId, status])
+  @@index([coachId, status])
+  @@index([scheduledAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MarketplacePlan  (schedule[] stored as JSON)
+// ─────────────────────────────────────────────────────────────────────────────
+model MarketplacePlan {
+  id                  String       @id @default(uuid())
+  coachId             String
+  coach               CoachProfile @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  userId              String       // creator user id (denormalised)
+  type                String
+  title               String
+  description         String       @default("")
+  thumbnailUrl        String       @default("")
+  previewUrl          String       @default("")
+  difficulty          String       @default("beginner")
+  goal                String       @default("general")
+  durationDays        Int
+  price               Float
+  currency            String       @default("USD")
+  isFree              Boolean      @default(false)
+  isPublished         Boolean      @default(false)
+  purchaseCount       Int          @default(0)
+  avgRating           Float        @default(0)
+  tags                String[]     @default([])
+  schedule            Json         @default("[]")
+  sessionsIncluded    Int          @default(0)
+  sessionDurationMins Int          @default(60)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  purchases Purchase[]
+
+  @@index([type, isPublished])
+  @@index([goal])
+  @@index([purchaseCount])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Purchase
+// ─────────────────────────────────────────────────────────────────────────────
+model Purchase {
+  id            String          @id @default(uuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId        String
+  plan          MarketplacePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  coachId       String
+  coach         CoachProfile    @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  amount        Float
+  currency      String          @default("USD")
+  status        String          @default("completed")
+  paymentMethod String          @default("card")
+  transactionId String          @default("")
+  expiresAt     DateTime?
+  accessGranted Boolean         @default(true)
+  hasReviewed   Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([userId, planId])
+  @@index([coachId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat  (participants[] stored as String array of user IDs)
+// unreadCount and lastMessage stored as JSON
+// ─────────────────────────────────────────────────────────────────────────────
+model Chat {
+  id           String   @id @default(uuid())
+  participants String[] @default([])
+  lastMessage  Json?
+  unreadCount  Json     @default("{}")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  messages Message[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message  (readBy stored as JSON array)
+// ─────────────────────────────────────────────────────────────────────────────
+model Message {
+  id        String   @id @default(uuid())
+  chatId    String
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  senderId  String
+  type      String   @default("text")
+  text      String   @default("")
+  mediaUrl  String   @default("")
+  fileName  String   @default("")
+  planId    String?
+  readBy    Json     @default("[]")
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([chatId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TransformationStory
+// ─────────────────────────────────────────────────────────────────────────────
+model TransformationStory {
+  id              String       @id @default(uuid())
+  coachId         String
+  coach           CoachProfile @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  userId          String?
+  user            User?        @relation(fields: [userId], references: [id])
+  beforePhotoUrl  String       @default("")
+  afterPhotoUrl   String
+  caption         String       @default("")
+  weightLostKg    Float?
+  durationWeeks   Int?
+  isPublished     Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([coachId])
+}
