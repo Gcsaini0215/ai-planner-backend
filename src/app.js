@@ -95,6 +95,7 @@ app.get('/api', (req, res) =>
 );
 
 app.use('/api/auth',        require('./routes/auth'));
+app.use('/api/roles',       require('./routes/roles'));
 app.use('/api/users',       require('./routes/users'));
 app.use('/api/meals',       require('./routes/meals'));
 app.use('/api/diets',       require('./routes/diets'));

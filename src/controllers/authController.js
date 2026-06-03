@@ -24,6 +24,10 @@ const firebaseLogin = async (req, res, next) => {
     const { uid, phone_number: phone } = decoded;
     if (!phone) return sendError(res, 400, 'Phone number not present in Firebase token');
 
+    // Optional role sent by the client on first signup
+    const VALID_ROLES = ['user', 'coach', 'trainer', 'dietitian'];
+    const requestedRole = VALID_ROLES.includes(req.body.role) ? req.body.role : 'user';
+
     let user = await prisma.user.findUnique({ where: { firebaseUid: uid } });
 
     if (!user) {
@@ -37,9 +41,9 @@ const firebaseLogin = async (req, res, next) => {
         logger.info(`Migrated devLogin user to Firebase auth: ${phone}`);
       } else {
         user = await prisma.user.create({
-          data: { firebaseUid: uid, phone, lastLoginAt: new Date() },
+          data: { firebaseUid: uid, phone, role: requestedRole, lastLoginAt: new Date() },
         });
-        logger.info(`New user registered via Firebase: ${phone}`);
+        logger.info(`New user registered via Firebase: ${phone} (role: ${requestedRole})`);
       }
     } else {
       user = await prisma.user.update({
@@ -120,12 +124,16 @@ const devLogin = async (req, res, next) => {
     const { phone } = req.body;
     if (!phone) return sendError(res, 400, 'phone is required');
 
+    const VALID_ROLES = ['user', 'coach', 'trainer', 'dietitian'];
+    const requestedRole = VALID_ROLES.includes(req.body.role) ? req.body.role : 'user';
+
     let user = await prisma.user.findUnique({ where: { phone } });
     if (!user) {
       user = await prisma.user.create({
         data: {
           firebaseUid: `dev_${phone.replace(/\D/g, '')}`,
           phone,
+          role: requestedRole,
           lastLoginAt: new Date(),
         },
       });

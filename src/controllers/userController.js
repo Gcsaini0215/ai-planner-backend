@@ -1,6 +1,6 @@
 'use strict';
 
-const { sendSuccess } = require('../utils/response');
+const { sendSuccess, sendError } = require('../utils/response');
 const { toSafeUser, calcCalorieGoal } = require('../utils/userHelpers');
 const prisma = require('../config/prisma');
 
@@ -20,15 +20,21 @@ const getProfile = async (req, res, next) => {
  */
 const updateProfile = async (req, res, next) => {
   try {
+    const VALID_ROLES    = ['user', 'coach', 'dietitian', 'trainer'];
     const allowedFields = [
       'name', 'email', 'age', 'gender', 'height', 'weight',
       'targetWeight', 'goal', 'activityLevel', 'caloriesGoal',
-      'waterGoal', 'profileImage',
+      'waterGoal', 'profileImage', 'role',
     ];
 
     const updates = {};
     for (const field of allowedFields) {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
+    }
+
+    // Validate role slug if provided
+    if (updates.role && !VALID_ROLES.includes(updates.role)) {
+      return sendError(res, 400, `Invalid role. Must be one of: ${VALID_ROLES.join(', ')}`);
     }
 
     const merged = { ...req.user, ...updates };

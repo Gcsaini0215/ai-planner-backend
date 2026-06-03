@@ -2,6 +2,7 @@
 
 const router      = require('express').Router();
 const seedCoaches = require('../seed/seedCoaches');
+const seedRoles   = require('../seed/seedRoles');
 const prisma      = require('../config/prisma');
 const foods       = require('../seed/foodsList');
 
@@ -11,6 +12,22 @@ router.use((req, res, next) => {
     return res.status(403).json({ success: false, message: 'Seed endpoint disabled in production' });
   }
   next();
+});
+
+// POST /api/seed/roles  ← run once to populate RoleMetadata table
+router.post('/roles', async (req, res, next) => {
+  try {
+    const results = await seedRoles();
+    res.json({ success: true, message: `Seeded ${results.length} roles`, data: results });
+  } catch (err) { next(err); }
+});
+
+// GET /api/seed/roles
+router.get('/roles', async (req, res, next) => {
+  try {
+    const results = await seedRoles();
+    res.json({ success: true, message: `Seeded ${results.length} roles`, data: results });
+  } catch (err) { next(err); }
 });
 
 // POST /api/seed/coaches

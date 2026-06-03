@@ -11,6 +11,19 @@ generator client {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Role  (seeded — one row per role: User / Fitness Coach / Dietitian / Trainer)
+// ─────────────────────────────────────────────────────────────────────────────
+model Role {
+  id          String  @id @default(uuid())
+  slug        String  @unique  // 'user' | 'coach' | 'dietitian' | 'trainer'
+  name        String            // 'User' | 'Fitness Coach' | 'Dietitian' | 'Trainer'
+  description String  @default("")
+  icon        String  @default("👤")
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // User
 // ─────────────────────────────────────────────────────────────────────────────
 enum UserRole {
