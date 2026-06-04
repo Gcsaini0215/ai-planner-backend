@@ -142,4 +142,44 @@ const getDashboard = async (req, res, next) => {
   }
 };
 
-module.exports = { getProfile, updateProfile, getDashboard };
+// ── DELETE /api/users/account ─────────────────────────────────────────────────
+// 1. Archive user data to DeletedUser table (audit trail).
+// 2. Hard-delete the User row — all cascading rows go with it.
+// 3. Phone number is released and immediately available for new registrations.
+const deleteAccount = async (req, res, next) => {
+  const user = req.user;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // ── Step 1: Archive basic identity before any deletion ──────────────────
+      const role = user.roleRef?.slug ?? user.role ?? 'user';
+
+      await tx.deletedUser.create({
+        data: {
+          originalUserId: user.id,
+          name:           user.name           ?? '',
+          email:          user.email          ?? '',
+          phone:          user.phone,
+          role,
+          registeredAt:   user.createdAt      ?? null,
+          lastLoginAt:    user.lastLoginAt     ?? null,
+          deletionReason: req.body.reason      ?? '',
+          deletedBy:      'self',
+          metadata: {
+            isVerifiedCoach:   user.isVerifiedCoach   ?? false,
+            isProfileComplete: user.userProfile?.isProfileComplete ?? false,
+          },
+        },
+      });
+
+      // ── Step 2: Hard-delete User (cascades to UserProfile, meals, etc.) ─────
+      await tx.user.delete({ where: { id: user.id } });
+    });
+
+    return sendSuccess(res, 200, 'Account deleted successfully. Your data has been archived for compliance.');
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = { getProfile, updateProfile, getDashboard, deleteAccount };

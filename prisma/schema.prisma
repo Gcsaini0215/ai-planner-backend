@@ -11,6 +11,37 @@ generator client {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DeletedUser  — audit archive written BEFORE a User row is hard-deleted.
+// Admin-only; never exposed to regular users.
+// ─────────────────────────────────────────────────────────────────────────────
+model DeletedUser {
+  id              String    @id @default(uuid())
+
+  // Original identity
+  originalUserId  String               // User.id that was deleted
+  name            String    @default("")
+  email           String    @default("")
+  phone           String               // kept for audit; no longer unique after deletion
+  role            String    @default("user")  // slug at time of deletion
+
+  // Timestamps
+  registeredAt    DateTime?            // User.createdAt
+  lastLoginAt     DateTime?            // User.lastLoginAt
+  deletedAt       DateTime  @default(now())
+
+  // Deletion context
+  deletionReason  String    @default("")
+  deletedBy       String    @default("self") // 'self' | 'admin'
+
+  // Catch-all for future audit needs (plan IDs, coach bookings count, etc.)
+  metadata        Json      @default("{}")
+
+  @@index([phone])
+  @@index([originalUserId])
+  @@index([deletedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Role  (seeded — one row per role: User / Fitness Coach / Dietitian / Trainer)
 // ─────────────────────────────────────────────────────────────────────────────
 model Role {
