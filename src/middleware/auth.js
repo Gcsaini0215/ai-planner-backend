@@ -19,7 +19,10 @@ const protect = async (req, res, next) => {
     const token   = authHeader.split(' ')[1];
     const decoded = verifyAccessToken(token);
 
-    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+    const user = await prisma.user.findUnique({
+      where:   { id: decoded.id },
+      include: { userProfile: true, roleRef: true },
+    });
     if (!user || !user.isActive) {
       return sendError(res, 401, 'User not found or account deactivated');
     }
@@ -57,12 +60,11 @@ const optionalAuth = async (req, res, next) => {
  */
 const requireRole = (roles) => (req, res, next) => {
   if (!req.user) return sendError(res, 401, 'Not authenticated');
-  if (!roles.includes(req.user.role)) {
-    return sendError(
-      res,
-      403,
-      `Access denied. Required role: ${roles.join(' or ')}. Your role: ${req.user.role}`
-    );
+  // Prefer the authoritative FK relation slug; fall back to enum
+  const userRole = req.user.roleRef?.slug ?? req.user.role ?? 'user';
+  if (!roles.includes(userRole)) {
+    return sendError(res, 403,
+      `Access denied. Required: ${roles.join(' or ')}. Your role: ${userRole}`);
   }
   next();
 };

@@ -16,15 +16,17 @@ generator client {
 model Role {
   id          String  @id @default(uuid())
   slug        String  @unique  // 'user' | 'coach' | 'dietitian' | 'trainer'
-  name        String            // 'User' | 'Fitness Coach' | 'Dietitian' | 'Trainer'
+  name        String
   description String  @default("")
   icon        String  @default("👤")
   isActive    Boolean @default(true)
   sortOrder   Int     @default(0)
+
+  users       User[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// User
+// User  — identity + auth only
 // ─────────────────────────────────────────────────────────────────────────────
 enum UserRole {
   user
@@ -35,11 +37,49 @@ enum UserRole {
 }
 
 model User {
-  id                String    @id @default(uuid())
-  firebaseUid       String    @unique
-  phone             String    @unique
-  name              String    @default("")
-  email             String    @default("")
+  id              String    @id @default(uuid())
+  firebaseUid     String    @unique
+  phone           String    @unique
+  name            String    @default("")
+  email           String    @default("")
+
+  // Role FK — points to the Role table (UUID).
+  // The legacy enum `role` is kept for backwards compat during migration.
+  roleId          String?
+  roleRef         Role?     @relation(fields: [roleId], references: [id])
+  role            UserRole  @default(user)   // kept in sync with roleRef.slug
+
+  isVerifiedCoach Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  userProfile           UserProfile?
+  meals                 Meal[]
+  waterLogs             WaterLog[]
+  weightLogs            WeightLog[]
+  workoutLogs           WorkoutLog[]
+  dietPlans             DietPlan[]
+  reminders             Reminder[]
+  customFoods           Food[]
+  coachProfile          CoachProfile?
+  coachFollowers        CoachFollower[]
+  coachReviews          CoachReview[]
+  purchases             Purchase[]
+  bookings              Booking[]
+  transformationStories TransformationStory[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UserProfile  — health / fitness data (created after onboarding)
+// ─────────────────────────────────────────────────────────────────────────────
+model UserProfile {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   age               Int?
   gender            String?
   height            Float?
@@ -47,30 +87,13 @@ model User {
   targetWeight      Float?
   goal              String?
   activityLevel     String?
-  caloriesGoal      Int       @default(2000)
-  waterGoal         Int       @default(2500)
-  profileImage      String    @default("")
-  role              UserRole  @default(user)
-  isVerifiedCoach   Boolean   @default(false)
-  isProfileComplete Boolean   @default(false)
-  isActive          Boolean   @default(true)
-  lastLoginAt       DateTime?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  caloriesGoal      Int      @default(2000)
+  waterGoal         Int      @default(2500)
+  profileImage      String   @default("")
+  isProfileComplete Boolean  @default(false)
 
-  meals            Meal[]
-  waterLogs        WaterLog[]
-  weightLogs       WeightLog[]
-  workoutLogs      WorkoutLog[]
-  dietPlans        DietPlan[]
-  reminders        Reminder[]
-  customFoods      Food[]
-  coachProfile          CoachProfile?
-  coachFollowers        CoachFollower[]
-  coachReviews          CoachReview[]
-  purchases             Purchase[]
-  bookings              Booking[]
-  transformationStories TransformationStory[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

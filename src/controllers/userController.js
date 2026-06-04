@@ -4,74 +4,101 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { toSafeUser, calcCalorieGoal } = require('../utils/userHelpers');
 const prisma = require('../config/prisma');
 
-/**
- * GET /api/users/profile
- */
+const USER_INCLUDE = { userProfile: true, roleRef: true };
+
+// ── GET /api/users/profile ────────────────────────────────────────────────────
 const getProfile = async (req, res, next) => {
   try {
-    return sendSuccess(res, 200, 'Profile fetched', toSafeUser(req.user));
+    const user = await prisma.user.findUnique({
+      where:   { id: req.user.id },
+      include: USER_INCLUDE,
+    });
+    return sendSuccess(res, 200, 'Profile fetched', toSafeUser(user));
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * PUT /api/users/profile
- */
+// ── PUT /api/users/profile ────────────────────────────────────────────────────
 const updateProfile = async (req, res, next) => {
   try {
-    const VALID_ROLES    = ['user', 'coach', 'dietitian', 'trainer'];
-    const allowedFields = [
-      'name', 'email', 'age', 'gender', 'height', 'weight',
-      'targetWeight', 'goal', 'activityLevel', 'caloriesGoal',
-      'waterGoal', 'profileImage', 'role',
-    ];
+    const userId = req.user.id;
+    const body   = req.body;
 
-    const updates = {};
-    for (const field of allowedFields) {
-      if (req.body[field] !== undefined) updates[field] = req.body[field];
+    // ── 1. Resolve role from roleId (UUID) or role slug ───────────────────────
+    let roleUpdate = {};
+    if (body.roleId || body.role) {
+      let roleRow = null;
+      if (body.roleId) roleRow = await prisma.role.findUnique({ where: { id: body.roleId } });
+      if (!roleRow && body.role) roleRow = await prisma.role.findUnique({ where: { slug: body.role } });
+      if (roleRow) roleUpdate = { roleId: roleRow.id, role: roleRow.slug };
     }
 
-    // Validate role slug if provided
-    if (updates.role && !VALID_ROLES.includes(updates.role)) {
-      return sendError(res, 400, `Invalid role. Must be one of: ${VALID_ROLES.join(', ')}`);
+    // ── 2. Fields that live on the User table ─────────────────────────────────
+    const userFields = {};
+    if (body.name  !== undefined) userFields.name  = body.name;
+    if (body.email !== undefined) userFields.email = body.email;
+    if (body.phone !== undefined) userFields.phone = body.phone;
+    Object.assign(userFields, roleUpdate);
+
+    // ── 3. Fields that live on the UserProfile table ──────────────────────────
+    const profileFields = {};
+    for (const key of ['age','gender','height','weight','targetWeight',
+                        'goal','activityLevel','caloriesGoal','waterGoal','profileImage']) {
+      if (body[key] !== undefined) profileFields[key] = body[key];
     }
 
-    const merged = { ...req.user, ...updates };
-
-    if (!updates.caloriesGoal) {
-      updates.caloriesGoal = calcCalorieGoal({
-        weight:        merged.weight,
-        height:        merged.height,
-        age:           merged.age,
-        gender:        merged.gender,
-        activityLevel: merged.activityLevel,
-        goal:          merged.goal,
+    // Auto-compute caloriesGoal when not explicitly set
+    if (!profileFields.caloriesGoal) {
+      const base   = req.user.userProfile ?? {};
+      const merged = { ...base, ...profileFields };
+      const cal    = calcCalorieGoal({
+        weight: merged.weight, height: merged.height, age: merged.age,
+        gender: merged.gender, activityLevel: merged.activityLevel, goal: merged.goal,
       });
+      if (cal !== 2000) profileFields.caloriesGoal = cal;
     }
 
-    const core = ['name', 'age', 'gender', 'height', 'weight', 'goal', 'activityLevel'];
-    updates.isProfileComplete = core.every(
-      (f) => merged[f] !== undefined && merged[f] !== null && merged[f] !== ''
-    );
+    // ── 4. Compute isProfileComplete per role ─────────────────────────────────
+    const role    = roleUpdate.role ?? req.user.roleRef?.slug ?? req.user.role ?? 'user';
+    const isCoach = ['coach', 'trainer', 'dietitian'].includes(role);
+    const base    = req.user.userProfile ?? {};
+    const merged  = { ...base, ...profileFields };
 
-    const updated = await prisma.user.update({
-      where: { id: req.user.id },
-      data:  updates,
-    });
+    profileFields.isProfileComplete = isCoach
+      // Coaches: complete as soon as name + email exist
+      ? (userFields.name ?? req.user.name ?? '').trim() !== '' &&
+        (userFields.email ?? req.user.email ?? '').trim() !== ''
+      // Users: need full health profile
+      : ['age','gender','height','weight','goal','activityLevel'].every(
+          (f) => merged[f] !== undefined && merged[f] !== null && merged[f] !== ''
+        );
 
-    return sendSuccess(res, 200, 'Profile updated', toSafeUser(updated));
+    // ── 5. Upsert UserProfile + update User in one transaction ────────────────
+    const [, user] = await prisma.$transaction([
+      prisma.userProfile.upsert({
+        where:  { userId },
+        update: profileFields,
+        create: { userId, ...profileFields },
+      }),
+      prisma.user.update({
+        where:   { id: userId },
+        data:    userFields,
+        include: USER_INCLUDE,
+      }),
+    ]);
+
+    return sendSuccess(res, 200, 'Profile updated', toSafeUser(user));
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * GET /api/users/dashboard
- */
+// ── GET /api/users/dashboard ──────────────────────────────────────────────────
 const getDashboard = async (req, res, next) => {
   try {
     const user  = req.user;
+    const prof  = user.userProfile ?? {};
     const today = new Date().toISOString().split('T')[0];
 
     const [mealsToday, waterLogs, workoutsToday] = await Promise.all([
@@ -82,48 +109,33 @@ const getDashboard = async (req, res, next) => {
 
     const caloriesConsumed = mealsToday.reduce((s, m) => s + m.totalCalories, 0);
     const macros = mealsToday.reduce(
-      (acc, m) => ({
-        protein: acc.protein + m.totalProtein,
-        carbs:   acc.carbs   + m.totalCarbs,
-        fat:     acc.fat     + m.totalFat,
-      }),
+      (acc, m) => ({ protein: acc.protein + m.totalProtein, carbs: acc.carbs + m.totalCarbs, fat: acc.fat + m.totalFat }),
       { protein: 0, carbs: 0, fat: 0 }
     );
-
     const waterConsumed  = waterLogs.reduce((s, l) => s + l.amount, 0);
     const caloriesBurned = workoutsToday.reduce((s, w) => s + w.caloriesBurned, 0);
     const netCalories    = Math.round(caloriesConsumed - caloriesBurned);
-
-    const bmiHeight = user.height;
-    const bmiWeight = user.weight;
-    const bmi = (bmiHeight && bmiWeight)
-      ? parseFloat((bmiWeight / Math.pow(bmiHeight / 100, 2)).toFixed(1))
-      : null;
+    const caloriesGoal   = prof.caloriesGoal ?? 2000;
+    const waterGoal      = prof.waterGoal    ?? 2500;
+    const bmi = (prof.height && prof.weight)
+      ? parseFloat((prof.weight / Math.pow(prof.height / 100, 2)).toFixed(1)) : null;
 
     return sendSuccess(res, 200, 'Dashboard data fetched', {
       date: today,
       calories: {
-        goal:      user.caloriesGoal,
-        consumed:  Math.round(caloriesConsumed),
-        burned:    Math.round(caloriesBurned),
-        net:       netCalories,
-        remaining: Math.max(0, user.caloriesGoal - netCalories),
-        progress:  Math.min(100, Math.round((caloriesConsumed / user.caloriesGoal) * 100)),
+        goal: caloriesGoal, consumed: Math.round(caloriesConsumed),
+        burned: Math.round(caloriesBurned), net: netCalories,
+        remaining: Math.max(0, caloriesGoal - netCalories),
+        progress:  Math.min(100, Math.round((caloriesConsumed / caloriesGoal) * 100)),
       },
       water: {
-        goal:      user.waterGoal,
-        consumed:  waterConsumed,
-        remaining: Math.max(0, user.waterGoal - waterConsumed),
-        progress:  Math.min(100, Math.round((waterConsumed / user.waterGoal) * 100)),
+        goal: waterGoal, consumed: waterConsumed,
+        remaining: Math.max(0, waterGoal - waterConsumed),
+        progress:  Math.min(100, Math.round((waterConsumed / waterGoal) * 100)),
       },
-      macros: {
-        protein: Math.round(macros.protein),
-        carbs:   Math.round(macros.carbs),
-        fat:     Math.round(macros.fat),
-      },
-      meals:    mealsToday.length,
-      workouts: workoutsToday.length,
-      profile:  { name: user.name, weight: user.weight, goal: user.goal, bmi },
+      macros: { protein: Math.round(macros.protein), carbs: Math.round(macros.carbs), fat: Math.round(macros.fat) },
+      meals: mealsToday.length, workouts: workoutsToday.length,
+      profile: { name: user.name, weight: prof.weight, goal: prof.goal, bmi },
     });
   } catch (error) {
     next(error);

@@ -1,23 +1,50 @@
 'use strict';
 
 /**
- * Strip firebaseUid, add computed bmi, and ensure role fields are always
- * present so Flutter can route to the correct dashboard on login.
+ * Merge User + UserProfile + roleRef into the flat shape Flutter expects.
+ * Strips firebaseUid and internal Prisma relation objects.
  */
 function toSafeUser(user) {
   if (!user) return null;
-  const { firebaseUid, ...safe } = user;
 
-  // Always expose role fields (defaults for rows created before migration)
-  safe.role            = safe.role            ?? 'user';
-  safe.isVerifiedCoach = safe.isVerifiedCoach ?? false;
+  const { firebaseUid, roleRef, userProfile, ...base } = user;
+  const prof = userProfile ?? {};
 
-  if (safe.height && safe.weight) {
-    const hm = safe.height / 100;
-    safe.bmi = parseFloat((safe.weight / (hm * hm)).toFixed(1));
-  } else {
-    safe.bmi = null;
-  }
+  const safe = {
+    // ── Identity (User table) ─────────────────────────────────────────────────
+    id:              base.id,
+    phone:           base.phone,
+    name:            base.name            ?? '',
+    email:           base.email           ?? '',
+    isActive:        base.isActive        ?? true,
+    isVerifiedCoach: base.isVerifiedCoach ?? false,
+    lastLoginAt:     base.lastLoginAt     ?? null,
+    createdAt:       base.createdAt,
+    updatedAt:       base.updatedAt,
+
+    // ── Role — prefer FK relation slug, fall back to enum ─────────────────────
+    role:   roleRef?.slug ?? base.role ?? 'user',
+    roleId: base.roleId   ?? null,
+
+    // ── Health / fitness (UserProfile table) ──────────────────────────────────
+    age:               prof.age              ?? null,
+    gender:            prof.gender           ?? null,
+    height:            prof.height           ?? null,
+    weight:            prof.weight           ?? null,
+    targetWeight:      prof.targetWeight     ?? null,
+    goal:              prof.goal             ?? null,
+    activityLevel:     prof.activityLevel    ?? null,
+    caloriesGoal:      prof.caloriesGoal     ?? 2000,
+    waterGoal:         prof.waterGoal        ?? 2500,
+    profileImage:      prof.profileImage     ?? '',
+    isProfileComplete: prof.isProfileComplete ?? false,
+  };
+
+  // Computed BMI
+  safe.bmi = (safe.height && safe.weight)
+    ? parseFloat((safe.weight / Math.pow(safe.height / 100, 2)).toFixed(1))
+    : null;
+
   return safe;
 }
 
@@ -27,24 +54,18 @@ function toSafeUser(user) {
 function calcCalorieGoal({ weight, height, age, gender, activityLevel, goal }) {
   if (!weight || !height || !age || !gender) return 2000;
 
-  let bmr =
-    gender === 'male'
-      ? 10 * weight + 6.25 * height - 5 * age + 5
-      : 10 * weight + 6.25 * height - 5 * age - 161;
+  const bmr = gender === 'male'
+    ? 10 * weight + 6.25 * height - 5 * age + 5
+    : 10 * weight + 6.25 * height - 5 * age - 161;
 
   const multipliers = {
-    sedentary:         1.2,
-    lightly_active:    1.375,
-    moderately_active: 1.55,
-    very_active:       1.725,
-    extra_active:      1.9,
+    sedentary: 1.2, lightly_active: 1.375, moderately_active: 1.55,
+    very_active: 1.725, extra_active: 1.9,
   };
 
   let tdee = bmr * (multipliers[activityLevel] || 1.55);
-
   if (goal === 'lose_weight') tdee -= 500;
   if (goal === 'gain_muscle') tdee += 300;
-
   return Math.round(tdee);
 }
 
