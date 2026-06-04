@@ -175,4 +175,31 @@ const devLogin = async (req, res, next) => {
   }
 };
 
-module.exports = { firebaseLogin, getMe, refreshToken, devLogin };
+// ── GET /api/auth/check-phone?phone=+91XXXXXXXXXX ─────────────────────────────
+// Public — called before OTP is sent during professional registration.
+// Returns whether the number is taken and, if so, which role owns it.
+const checkPhone = async (req, res, next) => {
+  try {
+    const phone = (req.query.phone ?? '').trim();
+    if (!phone) return sendError(res, 400, 'phone query param is required');
+
+    const user = await prisma.user.findUnique({
+      where:   { phone },
+      include: { roleRef: true },
+    });
+
+    if (!user) {
+      return sendSuccess(res, 200, 'Phone available', { exists: false });
+    }
+
+    const role = user.roleRef?.slug ?? user.role ?? 'user';
+    return sendSuccess(res, 200, 'Phone already registered', {
+      exists: true,
+      role,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = { firebaseLogin, getMe, refreshToken, devLogin, checkPhone };

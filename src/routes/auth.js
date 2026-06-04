@@ -1,7 +1,7 @@
 'use strict';
 
 const router = require('express').Router();
-const { firebaseLogin, getMe, refreshToken, devLogin } = require('../controllers/authController');
+const { firebaseLogin, getMe, refreshToken, devLogin, checkPhone } = require('../controllers/authController');
 const { protect }       = require('../middleware/auth');
 const { authLimiter }   = require('../middleware/rateLimiter');
 const validate          = require('../middleware/validate');
@@ -18,5 +18,8 @@ router.get('/me', protect, getMe);
 
 // POST /api/auth/dev-login  (development only — blocked in production)
 router.post('/dev-login', authLimiter, devLogin);
+
+// GET /api/auth/check-phone?phone=+91XXXXXXXXXX  (public — pre-OTP validation)
+router.get('/check-phone', authLimiter, checkPhone);
 
 module.exports = router;

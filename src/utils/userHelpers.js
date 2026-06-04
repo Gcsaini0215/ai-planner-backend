@@ -37,6 +37,8 @@ function toSafeUser(user) {
     caloriesGoal:      prof.caloriesGoal     ?? 2000,
     waterGoal:         prof.waterGoal        ?? 2500,
     profileImage:      prof.profileImage     ?? '',
+    // avatarId: Flutter stores the local avatar asset ID in profileImage field
+    avatarId:          prof.profileImage     ?? '',
     isProfileComplete: prof.isProfileComplete ?? false,
   };
 

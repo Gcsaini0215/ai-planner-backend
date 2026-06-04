@@ -8,26 +8,35 @@ const { sendSuccess, sendError } = require('../utils/response');
  * Returns all active roles ordered by sortOrder.
  * Public — no auth required.
  *
- * Uses prisma.role if the Prisma client has been regenerated after the Role
- * model was added; falls back to raw SQL otherwise so the endpoint always works.
+ * Query params:
+ *   ?excludeUser=true  (default true) — omits the 'user' slug so the
+ *                      professional registration screen never shows it.
  */
 const getRoles = async (req, res, next) => {
   try {
+    const excludeUser = req.query.excludeUser !== 'false'; // default: exclude
+
     let roles;
 
     if (prisma.role) {
-      // Prisma client is up-to-date
       roles = await prisma.role.findMany({
-        where:   { isActive: true },
+        where: {
+          isActive: true,
+          ...(excludeUser ? { slug: { not: 'user' } } : {}),
+        },
         orderBy: { sortOrder: 'asc' },
-        select:  { slug: true, name: true, description: true, icon: true },
+        // ── id MUST be included so Flutter can send roleId (UUID) on register ──
+        select: { id: true, slug: true, name: true, description: true, icon: true },
       });
     } else {
-      // Prisma client not yet regenerated — use raw SQL
+      // Prisma client not yet regenerated — raw SQL fallback
+      const where = excludeUser
+        ? `WHERE "isActive" = true AND "slug" != 'user'`
+        : `WHERE "isActive" = true`;
       roles = await prisma.$queryRawUnsafe(
-        `SELECT "slug","name","description","icon"
+        `SELECT "id","slug","name","description","icon"
          FROM "Role"
-         WHERE "isActive" = true
+         ${where}
          ORDER BY "sortOrder" ASC`,
       );
     }
