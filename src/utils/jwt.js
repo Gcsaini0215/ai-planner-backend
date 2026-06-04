@@ -36,11 +36,16 @@ const verifyRefreshToken = (token) =>
  * dashboard without an extra /me round-trip.
  */
 const buildTokenResponse = (user) => {
+  // Prefer the FK relation slug (authoritative) over the enum field.
+  // roleRef is included when the caller fetches with USER_INCLUDE.
+  const roleSlug = user.roleRef?.slug ?? user.role ?? 'user';
+
   const payload = {
-    id:             user.id,
-    phone:          user.phone,
-    role:           user.role           || 'user',
-    isVerifiedCoach:user.isVerifiedCoach || false,
+    id:              user.id,
+    phone:           user.phone,
+    role:            roleSlug,
+    roleId:          user.roleId         || null,
+    isVerifiedCoach: user.isVerifiedCoach || false,
   };
 
   return {
