@@ -3,6 +3,7 @@
 const { sendSuccess, sendError } = require('../utils/response');
 const { toSafeUser, calcCalorieGoal } = require('../utils/userHelpers');
 const prisma = require('../config/prisma');
+const logger = require('../utils/logger');
 
 const USER_INCLUDE = { userProfile: true, roleRef: true };
 
@@ -26,12 +27,25 @@ const updateProfile = async (req, res, next) => {
     const body   = req.body;
 
     // ── 1. Resolve role from roleId (UUID) or role slug ───────────────────────
+    logger.info(`[updateProfile] userId=${userId} | body.roleId="${body.roleId || ''}" | body.role="${body.role || ''}"`);
+
     let roleUpdate = {};
     if (body.roleId || body.role) {
       let roleRow = null;
-      if (body.roleId) roleRow = await prisma.role.findUnique({ where: { id: body.roleId } });
-      if (!roleRow && body.role) roleRow = await prisma.role.findUnique({ where: { slug: body.role } });
-      if (roleRow) roleUpdate = { roleId: roleRow.id, role: roleRow.slug };
+      if (body.roleId && body.roleId.trim()) {
+        roleRow = await prisma.role.findUnique({ where: { id: body.roleId.trim() } });
+        logger.info(`[updateProfile] findRole by id("${body.roleId}") → ${roleRow ? roleRow.slug : 'NOT FOUND'}`);
+      }
+      if (!roleRow && body.role && body.role.trim()) {
+        roleRow = await prisma.role.findUnique({ where: { slug: body.role.trim() } });
+        logger.info(`[updateProfile] findRole by slug("${body.role}") → ${roleRow ? roleRow.slug : 'NOT FOUND'}`);
+      }
+      if (roleRow) {
+        roleUpdate = { roleId: roleRow.id, role: roleRow.slug };
+        logger.info(`[updateProfile] ✅ roleUpdate = { roleId: ${roleRow.id}, role: ${roleRow.slug} }`);
+      } else {
+        logger.warn(`[updateProfile] ⚠ Could not resolve role from roleId="${body.roleId}" or slug="${body.role}" — role NOT updated`);
+      }
     }
 
     // ── 2. Fields that live on the User table ─────────────────────────────────
@@ -88,7 +102,10 @@ const updateProfile = async (req, res, next) => {
       }),
     ]);
 
-    return sendSuccess(res, 200, 'Profile updated', toSafeUser(user));
+    const safe = toSafeUser(user);
+    logger.info(`[updateProfile] ✅ Done: userId=${userId}, savedRole=${safe.role}, savedRoleId=${safe.roleId}`);
+    logger.info(`[updateProfile] Saved in database: userId=${userId}, savedRole=${safe.role}, savedRoleId=${safe.roleId}, savedRoleRef=${user.roleRef?.slug}`);
+    return sendSuccess(res, 200, 'Profile updated', safe);
   } catch (error) {
     next(error);
   }

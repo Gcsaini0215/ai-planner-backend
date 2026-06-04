@@ -2,6 +2,7 @@
 
 const { sendSuccess, sendError } = require('../utils/response');
 const prisma = require('../config/prisma');
+const logger = require('../utils/logger');
 
 // ── GET /api/coaches ──────────────────────────────────────────────────────────
 const listCoaches = async (req, res, next) => {
@@ -87,12 +88,14 @@ const applyAsCoach = async (req, res, next) => {
     } = req.body;
 
     const coachRole = ALLOWED_COACH_ROLES.includes(role) ? role : 'coach';
+    const roleRow = await prisma.role.findUnique({ where: { slug: coachRole } });
+    if (!roleRow) return sendError(res, 400, `Role not configured: ${coachRole}`);
 
     // Run both writes atomically so user.role and CoachProfile stay in sync
     const [, profile] = await prisma.$transaction([
       prisma.user.update({
         where: { id: req.user.id },
-        data:  { role: coachRole },
+        data:  { role: coachRole, roleId: roleRow.id },
       }),
       prisma.coachProfile.create({
         data: {
@@ -109,6 +112,7 @@ const applyAsCoach = async (req, res, next) => {
       }),
     ]);
 
+    logger.info(`[applyAsCoach] Saved in database: userId=${req.user.id}, savedRole=${coachRole}, savedRoleId=${roleRow.id}`);
     return sendSuccess(res, 201, 'Application submitted. Pending admin approval.', profile);
   } catch (e) { next(e); }
 };
