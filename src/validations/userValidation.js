@@ -5,6 +5,9 @@ const Joi = require('joi');
 const updateProfileSchema = Joi.object({
   name:          Joi.string().trim().max(100).optional(),
   email:         Joi.string().email().lowercase().optional().allow(''),
+  phone:         Joi.string().trim().optional(),
+  roleId:        Joi.string().trim().optional(),
+  role:          Joi.string().valid('user', 'coach', 'dietitian', 'trainer', 'admin').optional(),
   age:           Joi.number().integer().min(1).max(120).optional(),
   gender:        Joi.string().valid('male', 'female', 'other').optional(),
   height:        Joi.number().min(50).max(300).optional(),
@@ -15,6 +18,7 @@ const updateProfileSchema = Joi.object({
   caloriesGoal:  Joi.number().integer().min(500).max(10000).optional(),
   waterGoal:     Joi.number().integer().min(500).max(10000).optional(),
   profileImage:  Joi.string().uri().optional().allow(''),
+  isProfileComplete: Joi.boolean().optional(),
 });
 
 module.exports = { updateProfileSchema };
