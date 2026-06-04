@@ -42,6 +42,7 @@ const firebaseLogin = async (req, res, next) => {
     const role = await resolveRole({ roleId: req.body.roleId, roleSlug: req.body.role });
 
     let user = await prisma.user.findUnique({ where: { firebaseUid: uid }, include: USER_INCLUDE });
+    let isNewUser = false;
 
     if (!user) {
       // Phone fallback for devLogin-migrated accounts
@@ -56,12 +57,13 @@ const firebaseLogin = async (req, res, next) => {
         logger.info(`Migrated devLogin user to Firebase: ${phone}`);
       } else {
         // ── Brand-new account ─────────────────────────────────────────────────
+        isNewUser = true;
         user = await prisma.user.create({
           data: {
             firebaseUid:  uid,
             phone,
-            role:         role.slug,   // enum kept in sync
-            roleId:       role.id,     // FK → Role table (UUID)
+            role:         role.slug,
+            roleId:       role.id,
             lastLoginAt:  new Date(),
             userProfile:  { create: { isProfileComplete: false } },
           },
@@ -87,7 +89,11 @@ const firebaseLogin = async (req, res, next) => {
     }
 
     const tokens = buildTokenResponse(user);
-    return sendSuccess(res, 200, 'Login successful', { user: toSafeUser(user), tokens });
+    return sendSuccess(res, 200, 'Login successful', {
+      user:      toSafeUser(user),
+      tokens,
+      isNewUser,   // client uses this to decide onboarding vs dashboard
+    });
   } catch (error) {
     next(error);
   }
@@ -134,8 +140,10 @@ const devLogin = async (req, res, next) => {
 
     const role = await resolveRole({ roleId: req.body.roleId, roleSlug: req.body.role });
 
+    let isNewUser = false;
     let user = await prisma.user.findUnique({ where: { phone }, include: USER_INCLUDE });
     if (!user) {
+      isNewUser = true;
       user = await prisma.user.create({
         data: {
           firebaseUid:  `dev_${phone.replace(/\D/g, '')}`,
@@ -157,7 +165,11 @@ const devLogin = async (req, res, next) => {
     }
 
     const tokens = buildTokenResponse(user);
-    return sendSuccess(res, 200, '[DEV] Login successful', { user: toSafeUser(user), tokens });
+    return sendSuccess(res, 200, '[DEV] Login successful', {
+      user: toSafeUser(user),
+      tokens,
+      isNewUser,
+    });
   } catch (error) {
     next(error);
   }
