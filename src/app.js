@@ -89,7 +89,7 @@ app.get('/api', (req, res) =>
       '/api/auth', '/api/users', '/api/meals', '/api/diets',
       '/api/foods', '/api/water', '/api/exercises', '/api/workouts',
       '/api/reminders', '/api/coaches', '/api/marketplace',
-      '/api/chats', '/api/bookings',
+      '/api/chats', '/api/bookings', '/api/plans',
     ],
   })
 );
@@ -109,6 +109,7 @@ app.use('/api/coaches',     require('./routes/coaches'));
 app.use('/api/marketplace', require('./routes/marketplace'));
 app.use('/api/chats',       require('./routes/chats'));
 app.use('/api/bookings',    require('./routes/bookings'));
+app.use('/api/plans',       require('./routes/plans'));
 app.use('/api/seed',        require('./routes/seed'));
 
 // ── 404 + Global error handler ────────────────────────────────────────────────
